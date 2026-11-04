@@ -1,0 +1,209 @@
+@import "tailwindcss";
+
+/* ----------------------------------------------------
+   Authoritative Design Tokens (Playful Geometric)
+   ---------------------------------------------------- */
+:root {
+  --dp-color-ground: #fffdf5;
+  --dp-color-panel: #ffffff;
+  --dp-color-ink: #253044;
+  --dp-color-outline: #252b3a;
+  --dp-color-accent: #6434df;
+  --dp-color-accent-secondary: #ff78c5;
+  --dp-color-accent-warm: #ffd05b;
+  --dp-color-accent-fresh: #9bf1cd;
+  --dp-color-field-soft: #e9fff5;
+  --dp-color-selection: #f1ebff;
+  --dp-color-rule-muted: #b8b6c5;
+
+  --dp-typography-display: "PlayfulGeometricDisplay", "Host Grotesk", "Cairo", sans-serif;
+  --dp-typography-reading: "PlayfulGeometricReading", "Instrument Sans", "Cairo", sans-serif;
+  --dp-typography-reading-compact: 16px;
+  --dp-typography-label: 14px;
+  --dp-typography-metadata: 13px;
+  --dp-typography-reading-leading: 1.65;
+
+  --dp-spacing-gap-compact: 12px;
+  --dp-radius-corner: 17px;
+  --dp-border-outline-width: 3px;
+  --dp-border-detail-width: 2px;
+  --dp-motion-interaction: 180ms;
+
+  /* Custom Hard Offset Shadows */
+  --dp-shadow-hard-sm: 2px 2px 0px var(--dp-color-outline);
+  --dp-shadow-hard: 4px 4px 0px var(--dp-color-outline);
+  --dp-shadow-hard-lg: 6px 6px 0px var(--dp-color-outline);
+  --dp-shadow-hard-xl: 8px 8px 0px var(--dp-color-outline);
+  --dp-shadow-accent: 4px 4px 0px var(--dp-color-accent);
+}
+
+@theme {
+  --color-ground: var(--dp-color-ground);
+  --color-panel: var(--dp-color-panel);
+  --color-ink: var(--dp-color-ink);
+  --color-outline: var(--dp-color-outline);
+  --color-accent: var(--dp-color-accent);
+  --color-accent-secondary: var(--dp-color-accent-secondary);
+  --color-accent-warm: var(--dp-color-accent-warm);
+  --color-accent-fresh: var(--dp-color-accent-fresh);
+  --color-field-soft: var(--dp-color-field-soft);
+  --color-selection: var(--dp-color-selection);
+  --color-rule-muted: var(--dp-color-rule-muted);
+
+  --font-display: var(--dp-typography-display);
+  --font-reading: var(--dp-typography-reading);
+
+  --radius-corner: var(--dp-radius-corner);
+}
+
+/* Base resets & typography */
+html {
+  direction: rtl;
+  font-family: var(--dp-typography-reading);
+  background-color: var(--dp-color-ground);
+  color: var(--dp-color-ink);
+  line-height: var(--dp-typography-reading-leading);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  background-color: var(--dp-color-ground);
+  color: var(--dp-color-ink);
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--dp-typography-display);
+  color: var(--dp-color-ink);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+}
+
+/* ----------------------------------------------------
+   Geometric Neo-brutalist / Activity-book Utilities
+   ---------------------------------------------------- */
+
+.border-outline {
+  border-width: var(--dp-border-outline-width);
+  border-color: var(--dp-color-outline);
+  border-style: solid;
+}
+
+.border-detail {
+  border-width: var(--dp-border-detail-width);
+  border-color: var(--dp-color-outline);
+  border-style: solid;
+}
+
+.rounded-box {
+  border-radius: var(--dp-radius-corner);
+}
+
+.shadow-hard-sm {
+  box-shadow: 2px 2px 0px var(--dp-color-outline);
+}
+
+.shadow-hard {
+  box-shadow: 4px 4px 0px var(--dp-color-outline);
+}
+
+.shadow-hard-lg {
+  box-shadow: 6px 6px 0px var(--dp-color-outline);
+}
+
+.shadow-hard-xl {
+  box-shadow: 8px 8px 0px var(--dp-color-outline);
+}
+
+.shadow-hard-accent {
+  box-shadow: 4px 4px 0px var(--dp-color-accent);
+}
+
+.shadow-hard-warm {
+  box-shadow: 4px 4px 0px var(--dp-color-accent-warm);
+}
+
+.shadow-hard-fresh {
+  box-shadow: 4px 4px 0px var(--dp-color-accent-fresh);
+}
+
+.shadow-hard-secondary {
+  box-shadow: 4px 4px 0px var(--dp-color-accent-secondary);
+}
+
+/* Responsive shadow scaling for tablet/mobile */
+@media (max-width: 760px) {
+  .shadow-hard {
+    box-shadow: 3px 3px 0px var(--dp-color-outline);
+  }
+  .shadow-hard-lg {
+    box-shadow: 4px 4px 0px var(--dp-color-outline);
+  }
+  .shadow-hard-xl {
+    box-shadow: 5px 5px 0px var(--dp-color-outline);
+  }
+}
+
+/* Interactive elements */
+.interactive-lift {
+  transition: transform var(--dp-motion-interaction) cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow var(--dp-motion-interaction) cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.interactive-lift:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0px var(--dp-color-outline);
+}
+
+.interactive-lift:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0px var(--dp-color-outline);
+}
+
+/* Focus styles */
+:focus-visible {
+  outline: 3px solid var(--dp-color-accent);
+  outline-offset: 3px;
+}
+
+/* Accessibility: Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .interactive-lift:hover,
+  .interactive-lift:active {
+    transform: none !important;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--dp-color-ground);
+  border-left: 2px solid var(--dp-color-rule-muted);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--dp-color-accent-warm);
+  border: 2px solid var(--dp-color-outline);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dp-color-accent);
+}
+

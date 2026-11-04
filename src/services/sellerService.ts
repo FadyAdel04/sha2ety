@@ -1,0 +1,529 @@
+import { supabase } from '@/lib/supabase';
+import {
+  getStoredPropertiesMaster,
+  saveMasterProperty,
+  deleteMasterProperty,
+  PropertyItem,
+} from '@/services/propertyService';
+import { getStoredAppointments } from '@/services/appointmentService';
+import { addNotification } from '@/services/communicationService';
+import { sbCreateNotification } from '@/services/supabaseService';
+
+export type SellerPropertyStatus =
+  | 'draft'
+  | 'pending_review'
+  | 'requires_changes'
+  | 'available'
+  | 'rejected'
+  | 'sold';
+
+export interface PropertyLegalDocument {
+  id: string;
+  name: string;
+  type: 'deed' | 'ownership_proof' | 'additional';
+  typeName: string;
+  url: string;
+  size?: string;
+  uploadedAt: string;
+}
+
+export interface SellerProperty {
+  id: string;
+  sellerId: string;
+  title: string;
+  description: string;
+  price: number;
+  area: number;
+  type: string;
+  purpose?: string;
+  governorate?: string;
+  city: string;
+  location: string;
+  streetName?: string;
+  buildingNumber?: string;
+  latitude?: number;
+  longitude?: number;
+  bedrooms: number;
+  bathrooms: number;
+  floor?: string | number;
+  totalFloors?: string | number;
+  buildingAge?: string;
+  finishing?: string;
+  furnished?: string;
+  amenities?: string[];
+  imageUrl: string;
+  images?: string[];
+  documents?: PropertyLegalDocument[];
+  status: SellerPropertyStatus;
+  isVerified: boolean;
+  viewsCount: number;
+  createdAt: string;
+  adminFeedback?: string; // ملاحظات المشرف القانوني إن وجدت
+}
+
+export interface SellerStatistics {
+  totalProperties: number;
+  publishedCount: number;
+  pendingReviewCount: number;
+  requiresChangesCount: number;
+  totalViews: number;
+  favoritesCount: number;
+  inquiriesCount: number;
+  appointmentsCount: number;
+}
+
+export interface SellerInquiryItem {
+  id: string;
+  propertyTitle: string;
+  buyerName: string;
+  buyerPhone: string;
+  message: string;
+  reply?: string;
+  createdAt: string;
+}
+
+export interface SellerAppointmentItem {
+  id: string;
+  propertyTitle: string;
+  buyerName: string;
+  buyerPhone: string;
+  date: string;
+  timeSlot: string;
+  status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
+  createdAt: string;
+}
+
+const SELLER_STORAGE_KEY = 'sha2ety_seller_properties_store';
+
+function getStoredSellerProperties(): SellerProperty[] {
+  try {
+    const raw = localStorage.getItem(SELLER_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // Ignore
+  }
+  return [];
+}
+
+function saveStoredSellerProperties(list: SellerProperty[]) {
+  try {
+    localStorage.setItem(SELLER_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // Ignore
+  }
+}
+
+// Map a Master PropertyItem to a SellerProperty
+function mapMasterToSellerProperty(p: PropertyItem, defaultSellerId: string = 'demo-seller-1'): SellerProperty {
+  let mappedStatus: SellerPropertyStatus = 'available';
+  if (p.status === 'pending_review' || p.status === 'requires_changes' || p.status === 'draft' || p.status === 'sold' || p.status === 'rejected') {
+    mappedStatus = p.status as SellerPropertyStatus;
+  }
+
+  return {
+    id: p.id,
+    sellerId: p.sellerId || defaultSellerId,
+    title: p.title,
+    description: p.description || '',
+    price: p.price,
+    area: p.area,
+    type: p.type,
+    city: p.city,
+    location: p.location,
+    bedrooms: p.bedrooms,
+    bathrooms: p.bathrooms,
+    floor: p.floor,
+    buildingAge: p.age,
+    finishing: p.finishing,
+    imageUrl: p.imageUrl,
+    images: p.images,
+    status: mappedStatus,
+    isVerified: Boolean(p.isVerified),
+    viewsCount: p.viewsCount || 0,
+    createdAt: p.createdAt || new Date().toISOString(),
+    adminFeedback: p.adminNotes,
+  };
+}
+
+// Fetch all properties belonging to seller
+export async function getSellerProperties(sellerId?: string): Promise<SellerProperty[]> {
+  try {
+    if (sellerId && !import.meta.env.VITE_SUPABASE_URL?.includes('placeholder.supabase.co')) {
+      const { data, error } = await supabase
+        .from('properties')
+        .select('*')
+        .eq('seller_id', sellerId)
+        .order('created_at', { ascending: false });
+
+      if (!error && data && data.length > 0) {
+        return data.map((item) => ({
+          id: item.id,
+          sellerId: item.seller_id,
+          title: item.title,
+          description: item.description,
+          price: Number(item.price),
+          area: Number(item.area),
+          type: item.type,
+          city: item.city,
+          location: item.location,
+          bedrooms: item.bedrooms,
+          bathrooms: item.bathrooms,
+          imageUrl: item.cover_image || item.images?.[0] || '',
+          status: (item.status as SellerPropertyStatus) || 'pending_review',
+          isVerified: Boolean(item.is_verified),
+          viewsCount: item.views_count || 0,
+          createdAt: item.created_at,
+          adminFeedback: item.admin_notes,
+        }));
+      }
+    }
+  } catch (err) {
+    console.warn('Supabase getSellerProperties fallback to local store:', err);
+  }
+
+  // Fallback to dynamic master store and local seller store
+  const storedSellerProps = getStoredSellerProperties();
+  const masterProps = getStoredPropertiesMaster();
+
+  // Combine unique properties by id
+  const map = new Map<string, SellerProperty>();
+  
+  // First add all master properties relevant to seller
+  masterProps.forEach((p) => {
+    if (!sellerId || !p.sellerId || p.sellerId === sellerId || p.sellerId === 'demo-seller-1') {
+      map.set(p.id, mapMasterToSellerProperty(p, sellerId));
+    }
+  });
+
+  // Then add/overwrite with explicit seller properties
+  storedSellerProps.forEach((p) => {
+    if (!sellerId || !p.sellerId || p.sellerId === sellerId) {
+      map.set(p.id, p);
+    }
+  });
+
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}
+
+// Fetch calculated statistics (Smart Seller Analytics)
+export async function getSellerStatistics(sellerId?: string): Promise<SellerStatistics> {
+  const props = await getSellerProperties(sellerId);
+  const sellerPropIds = new Set(props.map((p) => p.id));
+
+  const totalProperties = props.length;
+  const publishedCount = props.filter((p) => p.status === 'available').length;
+  const pendingReviewCount = props.filter((p) => p.status === 'pending_review').length;
+  const requiresChangesCount = props.filter((p) => p.status === 'requires_changes').length;
+  const totalViews = props.reduce((acc, curr) => acc + (curr.viewsCount || 0), 0);
+  
+  // Real count of seller appointments
+  const allAppointments = getStoredAppointments();
+  const appointmentsCount = allAppointments.filter(
+    (a) => !sellerId || a.sellerId === sellerId || a.sellerId === 'demo-seller-1'
+  ).length;
+
+  // Real count of favorites for seller's properties
+  let favoritesCount = 0;
+  try {
+    const rawFavs = localStorage.getItem('sha2ety_favorites');
+    if (rawFavs) {
+      const favIds: string[] = JSON.parse(rawFavs);
+      favoritesCount = favIds.filter((id) => sellerPropIds.has(id)).length;
+    }
+  } catch {
+    // Ignore
+  }
+
+  // Real count of inquiries/conversations for seller
+  let inquiriesCount = 0;
+  try {
+    const rawConvs = localStorage.getItem('sha2ety_conversations_v2');
+    if (rawConvs) {
+      const convs = JSON.parse(rawConvs);
+      inquiriesCount = convs.filter(
+        (c: any) => !sellerId || c.sellerId === sellerId || c.sellerId === 'demo-seller-1'
+      ).length;
+    }
+  } catch {
+    // Ignore
+  }
+
+  return {
+    totalProperties,
+    publishedCount,
+    pendingReviewCount,
+    requiresChangesCount,
+    totalViews,
+    favoritesCount,
+    inquiriesCount,
+    appointmentsCount,
+  };
+}
+
+// Seller action: Mark property as sold
+export async function markPropertyAsSold(id: string): Promise<boolean> {
+  const list = getStoredSellerProperties();
+  const updated = list.map((p) => (p.id === id ? { ...p, status: 'sold' as SellerPropertyStatus } : p));
+  saveStoredSellerProperties(updated);
+
+  // Update in master catalog
+  const master = getStoredPropertiesMaster();
+  const target = master.find((p) => p.id === id);
+  if (target) {
+    saveMasterProperty({ ...target, status: 'sold' });
+  }
+
+  try {
+    await supabase.from('properties').update({ status: 'sold' }).eq('id', id);
+  } catch {
+    // Ignore
+  }
+  return true;
+}
+
+// Seller action: Delete draft
+export async function deletePropertyDraft(id: string): Promise<boolean> {
+  const list = getStoredSellerProperties();
+  const updated = list.filter((p) => p.id !== id);
+  saveStoredSellerProperties(updated);
+
+  deleteMasterProperty(id);
+
+  try {
+    await supabase.from('properties').delete().eq('id', id);
+  } catch {
+    // Ignore
+  }
+  return true;
+}
+
+// Seller action: Resubmit corrected property
+export async function resubmitProperty(id: string, correctedNotes?: string): Promise<boolean> {
+  const list = getStoredSellerProperties();
+  const updated = list.map((p) =>
+    p.id === id
+      ? {
+          ...p,
+          status: 'pending_review' as SellerPropertyStatus,
+          adminFeedback: undefined,
+          description: correctedNotes ? `${p.description}\n\n[تم التعديل]: ${correctedNotes}` : p.description,
+        }
+      : p
+  );
+  saveStoredSellerProperties(updated);
+
+  // Update in master store
+  const master = getStoredPropertiesMaster();
+  const target = master.find((p) => p.id === id);
+  if (target) {
+    saveMasterProperty({
+      ...target,
+      status: 'pending_review',
+      adminNotes: undefined,
+      description: correctedNotes ? `${target.description}\n\n[تم التعديل]: ${correctedNotes}` : target.description,
+    });
+  }
+
+  try {
+    await supabase.from('properties').update({ status: 'pending_review' }).eq('id', id);
+
+    // Notify seller and admin
+    addNotification({
+      userId: 'seller',
+      category: 'properties',
+      categoryLabel: 'العقارات',
+      title: 'تمت إعادة تقديم العقار للمراجعة',
+      message: `تم إرسال التعديلات والمستندات المطلوبة للعقار "${target?.title || id}" بنجاح وجاري فحصها من قبل الإدارة.`,
+      actionUrl: '/seller/properties',
+      actionLabel: 'متابعة الحالة',
+    });
+
+    addNotification({
+      userId: 'admin',
+      category: 'properties',
+      categoryLabel: 'العقارات',
+      title: 'إعادة تقديم عقار بعد استيفاء التعديلات',
+      message: `قام البائع بإعادة تقديم العقار "${target?.title || id}" بعد استيفاء الأوراق والملاحظات المطلوبة.`,
+      actionUrl: '/admin/reviews',
+      actionLabel: 'مراجعة الأوراق',
+    });
+
+    sbCreateNotification({
+      user_id: 'seller',
+      title: 'تمت إعادة تقديم العقار للمراجعة',
+      message: `تم إرسال التعديلات والمستندات المطلوبة للعقار بنجاح وجاري فحصها من قبل الإدارة.`,
+      type: 'properties',
+      related_id: id,
+    }).catch(() => {});
+  } catch {
+    // Ignore
+  }
+  return true;
+}
+
+// Seller action: Quick edit property details
+export async function updatePropertyDetails(
+  id: string,
+  updates: Partial<Pick<SellerProperty, 'title' | 'price' | 'description'>>
+): Promise<boolean> {
+  const list = getStoredSellerProperties();
+  const updated = list.map((p) => (p.id === id ? { ...p, ...updates } : p));
+  saveStoredSellerProperties(updated);
+
+  // Update in master store
+  const master = getStoredPropertiesMaster();
+  const target = master.find((p) => p.id === id);
+  if (target) {
+    saveMasterProperty({
+      ...target,
+      ...updates,
+    });
+  }
+
+  try {
+    await supabase.from('properties').update(updates).eq('id', id);
+  } catch {
+    // Ignore
+  }
+  return true;
+}
+
+// Add new property by seller (supports draft and pending_review)
+export async function addSellerProperty(
+  propertyData: Omit<SellerProperty, 'id' | 'createdAt' | 'viewsCount' | 'isVerified'>
+): Promise<SellerProperty> {
+  const newProp: SellerProperty = {
+    ...propertyData,
+    id: `prop-${Date.now()}`,
+    status: propertyData.status || 'pending_review',
+    isVerified: false,
+    viewsCount: 0,
+    createdAt: new Date().toISOString(),
+  };
+
+  const list = getStoredSellerProperties();
+  saveStoredSellerProperties([newProp, ...list]);
+
+  // Synchronize to master store so admin review queue and public marketplace see it
+  saveMasterProperty({
+    id: newProp.id,
+    title: newProp.title,
+    description: newProp.description,
+    price: newProp.price,
+    area: newProp.area,
+    type: newProp.type,
+    city: newProp.city,
+    location: newProp.location,
+    bedrooms: newProp.bedrooms,
+    bathrooms: newProp.bathrooms,
+    floor: newProp.floor ? String(newProp.floor) : undefined,
+    age: newProp.buildingAge,
+    finishing: newProp.finishing,
+    imageUrl: newProp.imageUrl,
+    images: newProp.images,
+    status: newProp.status,
+    isVerified: false,
+    viewsCount: 0,
+    createdAt: newProp.createdAt,
+    sellerId: newProp.sellerId,
+  });
+
+  // Record admin and seller notifications if submitted for review
+  if (newProp.status === 'pending_review') {
+    try {
+      addNotification({
+        userId: newProp.sellerId || 'seller',
+        category: 'properties',
+        categoryLabel: 'العقارات',
+        title: 'تم استلام عقارك بنجاح',
+        message: `تم إدراج عقارك الجديد "${newProp.title}" في طابور المراجعة القانونية وجاري تدقيق مستندات الملكية.`,
+        actionUrl: '/seller/properties',
+        actionLabel: 'متابعة حالة العقار',
+      });
+
+      addNotification({
+        userId: 'admin',
+        category: 'properties',
+        categoryLabel: 'العقارات',
+        title: 'عقار جديد بحاجة للمراجعة القانونية',
+        message: `تم إضافة عقار جديد "${newProp.title}" في ${newProp.city} ومرفق به مستندات الملكية بانتظار الفحص.`,
+        actionUrl: '/admin/reviews',
+        actionLabel: 'فحص العقار والمستندات',
+      });
+
+      sbCreateNotification({
+        user_id: newProp.sellerId || 'seller',
+        title: 'تم استلام عقارك بنجاح',
+        message: `تم إدراج عقارك الجديد "${newProp.title}" في طابور المراجعة القانونية وجاري تدقيق مستندات الملكية.`,
+        type: 'properties',
+        related_id: newProp.id,
+      }).catch(() => {});
+
+      const adminNotifsKey = 'sha2ety_admin_notifications';
+      const existingNotifs = JSON.parse(localStorage.getItem(adminNotifsKey) || '[]');
+      existingNotifs.unshift({
+        id: `notif-${Date.now()}`,
+        title: 'عقار جديد بحاجة للمراجعة القانونية',
+        message: `تم إضافة عقار جديد "${newProp.title}" في ${newProp.city} ومرفق به مستندات الملكية بانتظار الفحص.`,
+        propertyId: newProp.id,
+        createdAt: new Date().toISOString(),
+        read: false,
+      });
+      localStorage.setItem(adminNotifsKey, JSON.stringify(existingNotifs));
+    } catch {
+      // Ignore
+    }
+  }
+
+  try {
+    await supabase.from('properties').insert({
+      id: newProp.id,
+      seller_id: newProp.sellerId,
+      title: newProp.title,
+      description: newProp.description,
+      price: newProp.price,
+      currency: 'EGP',
+      area: newProp.area,
+      type: newProp.type,
+      property_type: newProp.type,
+      purpose: newProp.purpose || 'للبيع',
+      city: newProp.city,
+      location: newProp.location,
+      neighborhood: newProp.location,
+      governorate: newProp.governorate,
+      street_address: newProp.streetName,
+      latitude: newProp.latitude,
+      longitude: newProp.longitude,
+      bedrooms: newProp.bedrooms,
+      bathrooms: newProp.bathrooms,
+      floor_number: newProp.floor ? String(newProp.floor) : null,
+      total_floors: newProp.totalFloors ? Number(newProp.totalFloors) : null,
+      finishing_type: newProp.finishing,
+      furnishing_status: newProp.furnished,
+      property_age: newProp.buildingAge,
+      status: newProp.status,
+      is_verified: false,
+      cover_image: newProp.imageUrl,
+    });
+
+    // Insert property documents into property_documents table if present
+    if (newProp.documents && newProp.documents.length > 0) {
+      const docRows = newProp.documents.map((d) => ({
+        property_id: newProp.id,
+        seller_id: newProp.sellerId,
+        document_type: d.type,
+        storage_path: d.url,
+        document_name: d.name,
+        file_size: d.size,
+        review_status: 'pending',
+      }));
+      await supabase.from('property_documents').insert(docRows);
+    }
+  } catch (dbErr) {
+    console.warn('Supabase property insert error, preserved locally:', dbErr);
+  }
+
+  return newProp;
+}
