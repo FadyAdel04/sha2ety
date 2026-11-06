@@ -20,11 +20,12 @@ export type SellerPropertyStatus =
 export interface PropertyLegalDocument {
   id: string;
   name: string;
-  type: 'deed' | 'ownership_proof' | 'additional';
+  type: 'deed' | 'building_permit' | 'national_id' | 'tax_commercial_record' | 'reconciliation_certificate' | 'power_of_attorney' | 'ownership_proof' | 'additional';
   typeName: string;
   url: string;
   size?: string;
   uploadedAt: string;
+  status?: 'pending' | 'verified' | 'rejected';
 }
 
 export interface SellerProperty {
@@ -35,6 +36,7 @@ export interface SellerProperty {
   price: number;
   area: number;
   type: string;
+  subType?: string;
   purpose?: string;
   governorate?: string;
   city: string;
@@ -51,6 +53,7 @@ export interface SellerProperty {
   finishing?: string;
   furnished?: string;
   amenities?: string[];
+  customDetails?: Record<string, any>;
   imageUrl: string;
   images?: string[];
   documents?: PropertyLegalDocument[];
@@ -394,9 +397,17 @@ export async function updatePropertyDetails(
 export async function addSellerProperty(
   propertyData: Omit<SellerProperty, 'id' | 'createdAt' | 'viewsCount' | 'isVerified'>
 ): Promise<SellerProperty> {
+  const isUUID = (str?: string): boolean =>
+    Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+
+  const generatedId =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `prop-${Date.now()}`;
+
   const newProp: SellerProperty = {
     ...propertyData,
-    id: `prop-${Date.now()}`,
+    id: generatedId,
     status: propertyData.status || 'pending_review',
     isVerified: false,
     viewsCount: 0,
@@ -453,13 +464,15 @@ export async function addSellerProperty(
         actionLabel: 'فحص العقار والمستندات',
       });
 
-      sbCreateNotification({
-        user_id: newProp.sellerId || 'seller',
-        title: 'تم استلام عقارك بنجاح',
-        message: `تم إدراج عقارك الجديد "${newProp.title}" في طابور المراجعة القانونية وجاري تدقيق مستندات الملكية.`,
-        type: 'properties',
-        related_id: newProp.id,
-      }).catch(() => {});
+      if (isUUID(newProp.sellerId)) {
+        sbCreateNotification({
+          user_id: newProp.sellerId,
+          title: 'تم استلام عقارك بنجاح',
+          message: `تم إدراج عقارك الجديد "${newProp.title}" في طابور المراجعة القانونية وجاري تدقيق مستندات الملكية.`,
+          type: 'properties',
+          related_id: newProp.id,
+        }).catch(() => {});
+      }
 
       const adminNotifsKey = 'sha2ety_admin_notifications';
       const existingNotifs = JSON.parse(localStorage.getItem(adminNotifsKey) || '[]');
@@ -478,48 +491,49 @@ export async function addSellerProperty(
   }
 
   try {
-    await supabase.from('properties').insert({
-      id: newProp.id,
-      seller_id: newProp.sellerId,
-      title: newProp.title,
-      description: newProp.description,
-      price: newProp.price,
-      currency: 'EGP',
-      area: newProp.area,
-      type: newProp.type,
-      property_type: newProp.type,
-      purpose: newProp.purpose || 'للبيع',
-      city: newProp.city,
-      location: newProp.location,
-      neighborhood: newProp.location,
-      governorate: newProp.governorate,
-      street_address: newProp.streetName,
-      latitude: newProp.latitude,
-      longitude: newProp.longitude,
-      bedrooms: newProp.bedrooms,
-      bathrooms: newProp.bathrooms,
-      floor_number: newProp.floor ? String(newProp.floor) : null,
-      total_floors: newProp.totalFloors ? Number(newProp.totalFloors) : null,
-      finishing_type: newProp.finishing,
-      furnishing_status: newProp.furnished,
-      property_age: newProp.buildingAge,
-      status: newProp.status,
-      is_verified: false,
-      cover_image: newProp.imageUrl,
-    });
+    if (isUUID(newProp.sellerId)) {
+      const propPayload: Record<string, any> = {
+        id: newProp.id,
+        seller_id: newProp.sellerId,
+        title: newProp.title,
+        description: newProp.description || '',
+        price: Number(newProp.price),
+        area: Number(newProp.area),
+        type: newProp.type,
+        city: newProp.city,
+        location: newProp.location,
+        address: newProp.streetName || newProp.location,
+        bedrooms: Number(newProp.bedrooms) || 0,
+        bathrooms: Number(newProp.bathrooms) || 0,
+        floor_number: newProp.floor ? parseInt(String(newProp.floor), 10) || null : null,
+        total_floors: newProp.totalFloors ? parseInt(String(newProp.totalFloors), 10) || null : null,
+        finishing: newProp.finishing || null,
+        status: newProp.status || 'pending_review',
+        is_verified: false,
+        cover_image: newProp.imageUrl,
+        images: newProp.images || [newProp.imageUrl],
+        features: newProp.amenities || [],
+      };
+
+      const { error: insertPropErr } = await supabase.from('properties').insert(propPayload);
+      if (insertPropErr) {
+        console.warn('Supabase property insert error:', insertPropErr);
+      }
+    }
 
     // Insert property documents into property_documents table if present
-    if (newProp.documents && newProp.documents.length > 0) {
+    if (newProp.documents && newProp.documents.length > 0 && isUUID(newProp.sellerId)) {
       const docRows = newProp.documents.map((d) => ({
         property_id: newProp.id,
         seller_id: newProp.sellerId,
         document_type: d.type,
-        storage_path: d.url,
-        document_name: d.name,
-        file_size: d.size,
-        review_status: 'pending',
+        document_url: d.url,
+        status: 'pending',
       }));
-      await supabase.from('property_documents').insert(docRows);
+      const { error: docErr } = await supabase.from('property_documents').insert(docRows);
+      if (docErr) {
+        console.warn('Supabase property_documents insert error:', docErr);
+      }
     }
   } catch (dbErr) {
     console.warn('Supabase property insert error, preserved locally:', dbErr);

@@ -61,6 +61,8 @@ export interface AdminProperty extends Omit<PropertyItem, 'isVerified'> {
   age?: string;
   furnishing?: string;
   amenitiesList?: string[];
+  subType?: string;
+  customDetails?: Record<string, any>;
 }
 
 export interface AdminUser {
@@ -643,6 +645,35 @@ function mapMasterToAdminProperty(item: PropertyItem): AdminProperty {
   else if (item.status === 'rejected') reviewStatus = 'rejected';
   else if (item.status === 'sold') reviewStatus = 'archived';
 
+  // Look up in seller properties to grab real uploaded documents & custom details
+  let realDocs: PropertyDocument[] = [];
+  let realSubType: string | undefined = undefined;
+  let realCustomDetails: Record<string, any> | undefined = undefined;
+  try {
+    const rawSeller = localStorage.getItem('sha2ety_seller_properties');
+    if (rawSeller) {
+      const sellerList = JSON.parse(rawSeller);
+      const match = sellerList.find((p: any) => p.id === item.id);
+      if (match) {
+        realSubType = match.subType;
+        realCustomDetails = match.customDetails;
+        if (Array.isArray(match.documents) && match.documents.length > 0) {
+          realDocs = match.documents.map((d: any) => ({
+            id: d.id || `doc-${Date.now()}`,
+            name: d.name || 'مستند ملكية',
+            type: d.type === 'ownership_proof' ? 'license' : (d.type || 'deed'),
+            url: d.url || '#',
+            size: d.size || '1.5 MB',
+            uploadDate: d.uploadedAt ? d.uploadedAt.split('T')[0] : '2026-11-06',
+            status: item.isVerified ? 'verified' : (d.status || 'pending'),
+          }));
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   return {
     id: item.id,
     title: item.title,
@@ -663,7 +694,9 @@ function mapMasterToAdminProperty(item: PropertyItem): AdminProperty {
     viewsCount: item.viewsCount || 0,
     reviewStatus,
     submissionDate: item.createdAt || new Date().toISOString(),
-    documents: [
+    subType: realSubType,
+    customDetails: realCustomDetails,
+    documents: realDocs.length > 0 ? realDocs : [
       {
         id: `doc-${item.id}-1`,
         name: 'صورة عقد الملكية وسند الحيازة.pdf',
@@ -1033,6 +1066,24 @@ export function approveProperty(
         adminNotes,
       });
     }
+
+    // Also synchronize seller's personal store
+    const rawSeller = localStorage.getItem('sha2ety_seller_properties');
+    if (rawSeller) {
+      const sellerProps = JSON.parse(rawSeller);
+      const updatedSellerProps = sellerProps.map((p: any) =>
+        p.id === propertyId
+          ? {
+              ...p,
+              status: 'published',
+              isVerified: true,
+              documents: (p.documents || []).map((d: any) => ({ ...d, status: 'verified' })),
+            }
+          : p
+      );
+      localStorage.setItem('sha2ety_seller_properties', JSON.stringify(updatedSellerProps));
+    }
+
     supabase.from('properties').update({ status: 'available', is_verified: true, admin_notes: adminNotes || null }).eq('id', propertyId).then();
   } catch (syncErr) {
     console.warn('Failed to sync approved property to master:', syncErr);

@@ -11,6 +11,10 @@ export interface UserProfile {
   phone?: string;
   role: UserRole;
   emailVerified?: boolean;
+  nationalId?: string;
+  isVerified?: boolean;
+  avatarUrl?: string;
+  governorate?: string;
 }
 
 export interface RegisterData {
@@ -29,6 +33,7 @@ export interface AuthContextType {
   login: (email: string, password: string, rememberMe?: boolean) => Promise<{ error?: string; role?: UserRole }>;
   register: (data: RegisterData) => Promise<{ error?: string; needsEmailVerification?: boolean; role?: UserRole }>;
   logout: () => Promise<void>;
+  updateUserProfile: (updates: Partial<UserProfile>) => Promise<void>;
   forgotPassword: (email: string) => Promise<{ error?: string; success?: boolean }>;
   resetPassword: (newPassword: string) => Promise<{ error?: string; success?: boolean }>;
   getRoleRedirectUrl: (role?: UserRole | null) => string;
@@ -111,7 +116,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       phone: metadata.phone || (emailLower === 'admin@sha2ety.eg' ? '01222334455' : ''),
       role,
       emailVerified: Boolean(sbUser.email_confirmed_at),
+      nationalId: metadata.national_id,
+      isVerified: Boolean(metadata.is_verified),
+      avatarUrl: metadata.avatar_url,
+      governorate: metadata.governorate,
     };
+  };
+
+  const enrichProfileFromDb = async (profile: UserProfile): Promise<UserProfile> => {
+    try {
+      if (isSupabaseConfigured() && profile.id) {
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', profile.id)
+          .single();
+        if (data) {
+          return {
+            ...profile,
+            fullName: data.full_name || profile.fullName,
+            phone: data.phone || profile.phone,
+            nationalId: data.national_id || profile.nationalId,
+            isVerified: data.is_verified !== undefined ? Boolean(data.is_verified) : profile.isVerified,
+            avatarUrl: data.avatar_url || profile.avatarUrl,
+          };
+        }
+      }
+    } catch {
+      // Non-blocking
+    }
+    return profile;
   };
 
   // Initialize session on mount
@@ -124,7 +158,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const { data, error } = await supabase.auth.getSession();
           if (!error && data?.session?.user && mounted) {
             setSession(data.session);
-            setUser(mapSupabaseUserToProfile(data.session.user));
+            let profile = mapSupabaseUserToProfile(data.session.user);
+            profile = await enrichProfileFromDb(profile);
+            setUser(profile);
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(profile));
             setIsLoading(false);
             return;
           }
@@ -156,13 +193,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let authListener: { subscription: { unsubscribe: () => void } } | null = null;
     try {
       if (isSupabaseConfigured()) {
-        const { data } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+        const { data } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
           if (!mounted) return;
           setSession(currentSession);
           if (currentSession?.user) {
-            const profile = mapSupabaseUserToProfile(currentSession.user);
+            let profile = mapSupabaseUserToProfile(currentSession.user);
             setUser(profile);
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(profile));
+            // Enrich with profiles table data in background
+            const enriched = await enrichProfileFromDb(profile);
+            if (mounted) {
+              setUser(enriched);
+              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(enriched));
+            }
           } else {
             setUser(null);
             localStorage.removeItem(LOCAL_STORAGE_KEY);
@@ -369,6 +412,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { role: safeRole };
   };
 
+  const updateUserProfile = async (updates: Partial<UserProfile>) => {
+    if (!user) return;
+    const updated: UserProfile = { ...user, ...updates };
+    setUser(updated);
+
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+      const demoUsers = getStoredDemoUsers();
+      const updatedDemoUsers = demoUsers.map((u) => (u.id === user.id ? { ...u, ...updates } : u));
+      localStorage.setItem(DEMO_USERS_KEY, JSON.stringify(updatedDemoUsers));
+    } catch {
+      // Ignore
+    }
+
+    if (isSupabaseConfigured() && user.id) {
+      try {
+        const updatePayload: Record<string, any> = {
+          updated_at: new Date().toISOString(),
+        };
+        if (updates.fullName !== undefined) updatePayload.full_name = updates.fullName;
+        if (updates.phone !== undefined) updatePayload.phone = updates.phone;
+        if (updates.nationalId !== undefined) updatePayload.national_id = updates.nationalId;
+        if (updates.avatarUrl !== undefined) updatePayload.avatar_url = updates.avatarUrl;
+        if (updates.isVerified !== undefined) updatePayload.is_verified = updates.isVerified;
+
+        await supabase
+          .from('profiles')
+          .update(updatePayload)
+          .eq('id', user.id);
+      } catch (err) {
+        console.warn('Supabase profile update warning:', err);
+      }
+    }
+  };
+
   const logout = async () => {
     setIsLoading(true);
     if (isSupabaseConfigured()) {
@@ -437,6 +515,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         register,
         logout,
+        updateUserProfile,
         forgotPassword,
         resetPassword,
         getRoleRedirectUrl,

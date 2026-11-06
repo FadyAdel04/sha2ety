@@ -17,6 +17,9 @@ export interface SupabaseProfile {
   email: string;
   phone?: string;
   avatar_url?: string;
+  national_id?: string;
+  is_verified?: boolean;
+  governorate?: string;
   role: 'buyer' | 'seller' | 'admin';
   created_at: string;
 }
@@ -61,14 +64,17 @@ export interface SupabaseAppointment {
   buyer_id: string;
   seller_id: string;
   appointment_date: string;
-  appointment_time: string;
+  appointment_time?: string;
+  time_slot?: string;
+  buyer_phone?: string;
+  notes?: string;
   status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'rejected' | 'rescheduled';
   buyer_message?: string;
   seller_response?: string;
   created_at: string;
   updated_at?: string;
   // joined
-  property?: { title: string; city: string; price: number; cover_image_url?: string };
+  property?: { title: string; city: string; price: number; cover_image?: string; cover_image_url?: string };
   buyer?: { full_name: string; phone: string };
   seller?: { full_name: string; phone: string };
 }
@@ -79,6 +85,10 @@ export interface SupabaseNotification {
   title: string;
   message: string;
   type: 'properties' | 'appointments' | 'inquiries' | 'account';
+  category?: 'properties' | 'appointments' | 'inquiries' | 'account';
+  category_label?: string;
+  action_url?: string;
+  action_label?: string;
   related_id?: string;
   is_read: boolean;
   created_at: string;
@@ -99,9 +109,11 @@ export interface SupabaseInquiry {
   seller_id: string;
   message: string;
   reply?: string;
+  replied_at?: string;
+  is_replied?: boolean;
   status: 'new' | 'replied' | 'handled';
   created_at: string;
-  property?: { title: string; city: string; price: number; cover_image_url?: string };
+  property?: { title: string; city: string; price: number; cover_image?: string; cover_image_url?: string };
   buyer?: { full_name: string; phone: string };
   seller?: { full_name: string; phone: string };
 }
@@ -189,7 +201,11 @@ export async function sbFetchNotifications(userId: string): Promise<SupabaseNoti
     .limit(50);
 
   if (error) throw error;
-  return (data || []) as SupabaseNotification[];
+  return ((data || []) as any[]).map((row) => ({
+    ...row,
+    type: row.type || row.category || 'account',
+    related_id: row.related_id || row.action_url,
+  }));
 }
 
 export async function sbMarkNotificationRead(id: string): Promise<void> {
@@ -216,8 +232,32 @@ export async function sbCreateNotification(data: {
   type: SupabaseNotification['type'];
   related_id?: string;
 }): Promise<void> {
-  const { error } = await supabase.from('notifications').insert([{ ...data, is_read: false }]);
-  if (error) throw error;
+  // Only attempt insert if user_id is a valid UUID referencing profiles(id)
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.user_id)) {
+    return;
+  }
+
+  const categoryLabels: Record<string, string> = {
+    properties: 'العقارات',
+    appointments: 'المعاينات',
+    inquiries: 'الاستفسارات',
+    account: 'الحساب',
+  };
+
+  const payload: Record<string, any> = {
+    user_id: data.user_id,
+    title: data.title,
+    message: data.message,
+    category: data.type || 'account',
+    category_label: categoryLabels[data.type] || 'إشعار',
+    action_url: data.related_id || null,
+    is_read: false,
+  };
+
+  const { error } = await supabase.from('notifications').insert([payload]);
+  if (error) {
+    console.warn('Supabase sbCreateNotification warning:', error.message);
+  }
 }
 
 export async function sbCountUnreadNotifications(userId: string): Promise<number> {
@@ -317,33 +357,47 @@ export async function sbFetchPropertyImages(propertyId: string): Promise<string[
 // ─── APPOINTMENTS ─────────────────────────────────────────────────────────────
 
 export async function sbFetchBuyerAppointments(buyerId: string): Promise<SupabaseAppointment[]> {
+  const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+  if (!isUUID(buyerId)) return [];
+
   const { data, error } = await supabase
     .from('appointments')
     .select(`
       *,
-      property:properties(title, city, price, cover_image_url),
+      property:properties(title, city, price, cover_image),
       seller:profiles!seller_id(full_name, phone)
     `)
     .eq('buyer_id', buyerId)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []) as SupabaseAppointment[];
+  return ((data || []) as any[]).map((row) => ({
+    ...row,
+    appointment_time: row.time_slot || row.appointment_time || '',
+    buyer_message: row.notes || row.buyer_message || '',
+  })) as SupabaseAppointment[];
 }
 
 export async function sbFetchSellerAppointments(sellerId: string): Promise<SupabaseAppointment[]> {
+  const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+  if (!isUUID(sellerId)) return [];
+
   const { data, error } = await supabase
     .from('appointments')
     .select(`
       *,
-      property:properties(title, city, price, cover_image_url),
+      property:properties(title, city, price, cover_image),
       buyer:profiles!buyer_id(full_name, phone)
     `)
     .eq('seller_id', sellerId)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []) as SupabaseAppointment[];
+  return ((data || []) as any[]).map((row) => ({
+    ...row,
+    appointment_time: row.time_slot || row.appointment_time || '',
+    buyer_message: row.notes || row.buyer_message || '',
+  })) as SupabaseAppointment[];
 }
 
 export async function sbFetchAllAppointments(): Promise<SupabaseAppointment[]> {
@@ -351,14 +405,18 @@ export async function sbFetchAllAppointments(): Promise<SupabaseAppointment[]> {
     .from('appointments')
     .select(`
       *,
-      property:properties(title, city, price, cover_image_url),
+      property:properties(title, city, price, cover_image),
       buyer:profiles!buyer_id(full_name, phone),
       seller:profiles!seller_id(full_name, phone)
     `)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []) as SupabaseAppointment[];
+  return ((data || []) as any[]).map((row) => ({
+    ...row,
+    appointment_time: row.time_slot || row.appointment_time || '',
+    buyer_message: row.notes || row.buyer_message || '',
+  })) as SupabaseAppointment[];
 }
 
 export async function sbCreateAppointment(data: {
@@ -366,26 +424,52 @@ export async function sbCreateAppointment(data: {
   buyer_id: string;
   seller_id: string;
   appointment_date: string;
-  appointment_time: string;
+  time_slot?: string;
+  appointment_time?: string;
   buyer_message?: string;
+  notes?: string;
+  buyer_phone?: string;
 }): Promise<SupabaseAppointment> {
+  const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+  if (!isUUID(data.property_id) || !isUUID(data.buyer_id) || !isUUID(data.seller_id)) {
+    throw new Error('Invalid UUID for appointment creation');
+  }
+
+  const payload: any = {
+    property_id: data.property_id,
+    buyer_id: data.buyer_id,
+    seller_id: data.seller_id,
+    appointment_date: data.appointment_date,
+    time_slot: data.time_slot || data.appointment_time || '10:00 AM - 12:00 PM',
+    status: 'pending',
+  };
+  if (data.buyer_phone) payload.buyer_phone = data.buyer_phone;
+  if (data.notes || data.buyer_message) payload.notes = data.notes || data.buyer_message;
+
   const { data: result, error } = await supabase
     .from('appointments')
-    .insert([{ ...data, status: 'pending' }])
+    .insert([payload])
     .select()
     .single();
 
   if (error) throw error;
-  return result as SupabaseAppointment;
+  return {
+    ...result,
+    appointment_time: result.time_slot || '',
+    buyer_message: result.notes || '',
+  } as SupabaseAppointment;
 }
 
 export async function sbUpdateAppointmentStatus(
   id: string,
   status: SupabaseAppointment['status'],
-  sellerResponse?: string
+  notes?: string
 ): Promise<void> {
+  const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+  if (!isUUID(id)) return;
+
   const payload: any = { status, updated_at: new Date().toISOString() };
-  if (sellerResponse) payload.seller_response = sellerResponse;
+  if (notes) payload.notes = notes;
 
   const { error } = await supabase.from('appointments').update(payload).eq('id', id);
   if (error) throw error;
@@ -447,33 +531,45 @@ export async function sbGetFavoriteIds(buyerId: string): Promise<string[]> {
 // ─── INQUIRIES ────────────────────────────────────────────────────────────────
 
 export async function sbFetchBuyerInquiries(buyerId: string): Promise<SupabaseInquiry[]> {
+  const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+  if (!isUUID(buyerId)) return [];
+
   const { data, error } = await supabase
     .from('inquiries')
     .select(`
       *,
-      property:properties(title, city, price, cover_image_url),
+      property:properties(title, city, price, cover_image),
       seller:profiles!seller_id(full_name, phone)
     `)
     .eq('buyer_id', buyerId)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []) as SupabaseInquiry[];
+  return ((data || []) as any[]).map((row) => ({
+    ...row,
+    status: row.reply ? 'replied' : (row.is_replied ? 'handled' : 'new'),
+  })) as SupabaseInquiry[];
 }
 
 export async function sbFetchSellerInquiries(sellerId: string): Promise<SupabaseInquiry[]> {
+  const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+  if (!isUUID(sellerId)) return [];
+
   const { data, error } = await supabase
     .from('inquiries')
     .select(`
       *,
-      property:properties(title, city, price, cover_image_url),
+      property:properties(title, city, price, cover_image),
       buyer:profiles!buyer_id(full_name, phone)
     `)
     .eq('seller_id', sellerId)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []) as SupabaseInquiry[];
+  return ((data || []) as any[]).map((row) => ({
+    ...row,
+    status: row.reply ? 'replied' : (row.is_replied ? 'handled' : 'new'),
+  })) as SupabaseInquiry[];
 }
 
 export async function sbFetchAllInquiries(): Promise<SupabaseInquiry[]> {
@@ -481,14 +577,17 @@ export async function sbFetchAllInquiries(): Promise<SupabaseInquiry[]> {
     .from('inquiries')
     .select(`
       *,
-      property:properties(title, city, price, cover_image_url),
+      property:properties(title, city, price, cover_image),
       buyer:profiles!buyer_id(full_name, phone),
       seller:profiles!seller_id(full_name, phone)
     `)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []) as SupabaseInquiry[];
+  return ((data || []) as any[]).map((row) => ({
+    ...row,
+    status: row.reply ? 'replied' : (row.is_replied ? 'handled' : 'new'),
+  })) as SupabaseInquiry[];
 }
 
 export async function sbSendInquiry(data: {
@@ -497,28 +596,47 @@ export async function sbSendInquiry(data: {
   seller_id: string;
   message: string;
 }): Promise<SupabaseInquiry> {
+  const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+  if (!isUUID(data.property_id) || !isUUID(data.buyer_id) || !isUUID(data.seller_id)) {
+    throw new Error('Invalid UUID for inquiry');
+  }
+
   const { data: result, error } = await supabase
     .from('inquiries')
-    .insert([{ ...data, status: 'new' }])
+    .insert([{
+      property_id: data.property_id,
+      buyer_id: data.buyer_id,
+      seller_id: data.seller_id,
+      message: data.message,
+    }])
     .select()
     .single();
 
   if (error) throw error;
-  return result as SupabaseInquiry;
+  return {
+    ...result,
+    status: 'new',
+  } as SupabaseInquiry;
 }
 
 export async function sbReplyToInquiry(id: string, reply: string): Promise<void> {
+  const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+  if (!isUUID(id)) return;
+
   const { error } = await supabase
     .from('inquiries')
-    .update({ reply, status: 'replied' })
+    .update({ reply, replied_at: new Date().toISOString(), is_replied: true })
     .eq('id', id);
   if (error) throw error;
 }
 
 export async function sbMarkInquiryHandled(id: string): Promise<void> {
+  const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+  if (!isUUID(id)) return;
+
   const { error } = await supabase
     .from('inquiries')
-    .update({ status: 'handled' })
+    .update({ is_replied: true, replied_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw error;
 }
@@ -548,6 +666,20 @@ export async function sbFetchUserById(id: string): Promise<SupabaseProfile | nul
 
 export async function sbUpdateUserRole(id: string, role: string): Promise<void> {
   const { error } = await supabase.from('profiles').update({ role }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function sbUpdateUserProfile(
+  userId: string,
+  data: Partial<Omit<SupabaseProfile, 'id' | 'created_at'>>
+): Promise<void> {
+  const { error } = await supabase
+    .from('profiles')
+    .update({
+      ...data,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', userId);
   if (error) throw error;
 }
 

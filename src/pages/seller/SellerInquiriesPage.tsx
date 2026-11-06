@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -7,9 +7,15 @@ import { Select } from '@/components/ui/Select';
 import { ConversationDrawer } from '@/components/inquiries/ConversationDrawer';
 import { formatEGP } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
+import { useSellerInquiries } from '@/hooks/useSupabaseData';
 import {
   getUserConversations,
+  getStoredConversations,
+  saveStoredConversations,
+  getStoredMessages,
+  saveStoredMessages,
   ConversationThread,
+  ChatMessage,
   markConversationAsHandled,
 } from '@/services/communicationService';
 import {
@@ -25,22 +31,100 @@ import {
   AlertTriangle,
   X,
   ArrowLeft,
+  RefreshCw,
 } from 'lucide-react';
 
 export const SellerInquiriesPage: React.FC = () => {
   const { user } = useAuth();
+  const { inquiries: sbInquiries, loading: sbLoading, reload: reloadSbInquiries } = useSellerInquiries(user?.id);
   const [conversations, setConversations] = useState<ConversationThread[]>([]);
   const [selectedStatusTab, setSelectedStatusTab] = useState<'all' | 'new' | 'replied' | 'handled'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
 
-  const refreshList = () => {
-    setConversations(getUserConversations('seller', user?.id));
-  };
+  const refreshList = useCallback(() => {
+    const localConvs = getUserConversations('seller', user?.id);
+
+    if (sbInquiries && sbInquiries.length > 0) {
+      const mappedSb: ConversationThread[] = sbInquiries.map((inq: any) => ({
+        id: inq.id,
+        propertyId: inq.property_id,
+        propertyTitle: inq.property?.title || 'عقار معروض',
+        propertyImage: inq.property?.cover_image || inq.property?.cover_image_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=600&q=80',
+        propertyPrice: inq.property?.price || 0,
+        propertyLocation: inq.property?.city || 'الإسكندرية',
+        buyerId: inq.buyer_id,
+        buyerName: inq.buyer?.full_name || 'مشتري مهتم',
+        buyerPhone: inq.buyer?.phone || 'غير مسجل',
+        sellerId: inq.seller_id,
+        sellerName: user?.fullName || 'البائع',
+        sellerPhone: user?.phone || '',
+        status: (inq.status as ConversationThread['status']) || 'new',
+        statusLabel: inq.status === 'replied' ? 'تم الرد' : inq.status === 'handled' ? 'مكتمل ومعالج' : 'استفسار جديد',
+        lastMessage: inq.reply || inq.message,
+        lastMessageAt: new Date(inq.created_at).toLocaleDateString('ar-EG', {
+          day: 'numeric',
+          month: 'short',
+        }),
+        unreadBySeller: inq.status === 'new' ? 1 : 0,
+        unreadByBuyer: 0,
+        createdAt: inq.created_at,
+      }));
+
+      // Sync into stored conversations so ConversationDrawer can open it
+      const existingConvs = getStoredConversations();
+      const existingMap = new Map(existingConvs.map((c) => [c.id, c]));
+      mappedSb.forEach((c) => existingMap.set(c.id, c));
+      saveStoredConversations(Array.from(existingMap.values()));
+
+      // Sync initial message into stored messages
+      const storedMsgs = getStoredMessages();
+      sbInquiries.forEach((inq: any) => {
+        if (!storedMsgs[inq.id]) {
+          const list: ChatMessage[] = [
+            {
+              id: `msg-${inq.id}-buyer`,
+              conversationId: inq.id,
+              senderId: inq.buyer_id || 'buyer',
+              senderRole: 'buyer',
+              senderName: inq.buyer?.full_name || 'مشتري مهتم',
+              text: inq.message,
+              timestamp: inq.created_at,
+              read: true,
+            },
+          ];
+          if (inq.reply) {
+            list.push({
+              id: `msg-${inq.id}-seller`,
+              conversationId: inq.id,
+              senderId: user?.id || 'seller',
+              senderRole: 'seller',
+              senderName: user?.fullName || 'البائع',
+              text: inq.reply,
+              timestamp: inq.replied_at || inq.created_at,
+              read: true,
+            });
+          }
+          storedMsgs[inq.id] = list;
+        }
+      });
+      saveStoredMessages(storedMsgs);
+
+      // Merge unique by ID for UI
+      const map = new Map<string, ConversationThread>();
+      mappedSb.forEach((c) => map.set(c.id, c));
+      localConvs.forEach((c) => {
+        if (!map.has(c.id)) map.set(c.id, c);
+      });
+      setConversations(Array.from(map.values()));
+    } else {
+      setConversations(localConvs);
+    }
+  }, [sbInquiries, user?.id, user?.fullName, user?.phone]);
 
   useEffect(() => {
     refreshList();
-  }, [user?.id]);
+  }, [refreshList]);
 
   // Filtered
   const filteredConversations = useMemo(() => {
@@ -128,7 +212,12 @@ export const SellerInquiriesPage: React.FC = () => {
         </div>
 
         {/* Conversations Inbox List */}
-        {filteredConversations.length === 0 ? (
+        {sbLoading ? (
+          <div className="p-12 text-center bg-white border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] shadow-hard space-y-4">
+            <RefreshCw className="w-8 h-8 text-[var(--dp-color-accent)] animate-spin mx-auto" />
+            <p className="text-sm font-bold text-[#626d84]">جاري جلب استفسارات المشترين من قاعدة البيانات...</p>
+          </div>
+        ) : filteredConversations.length === 0 ? (
           <div className="p-12 bg-white border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] text-center shadow-hard space-y-3">
             <MessageSquare className="w-14 h-14 text-indigo-400 mx-auto" />
             <h3 className="text-lg font-black text-[var(--dp-color-ink)]">
@@ -224,6 +313,7 @@ export const SellerInquiriesPage: React.FC = () => {
         onClose={() => setActiveConvId(null)}
         conversationId={activeConvId}
         currentUserRole="seller"
+        currentUserId={user?.id}
         onUpdate={refreshList}
       />
     </DashboardLayout>

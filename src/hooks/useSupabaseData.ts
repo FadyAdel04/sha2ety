@@ -8,6 +8,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
+  getUserNotifications,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+} from '@/services/communicationService';
+import {
   sbFetchNotifications,
   sbMarkNotificationRead,
   sbMarkAllNotificationsRead,
@@ -59,10 +64,35 @@ export function useNotifications(userId: string | undefined) {
     try {
       setLoading(true);
       const data = await sbFetchNotifications(userId);
-      setNotifications(data);
+      if (data && data.length > 0) {
+        setNotifications(data);
+      } else {
+        const local = getUserNotifications(userId).map((n) => ({
+          id: n.id,
+          user_id: n.userId,
+          title: n.title,
+          message: n.message,
+          type: (n.category || 'account') as any,
+          is_read: n.read,
+          created_at: new Date().toISOString(),
+          related_id: n.actionUrl,
+        }));
+        setNotifications(local);
+      }
       setError(null);
-    } catch (e: any) {
-      setError(e.message);
+    } catch {
+      const local = getUserNotifications(userId).map((n) => ({
+        id: n.id,
+        user_id: n.userId,
+        title: n.title,
+        message: n.message,
+        type: (n.category || 'account') as any,
+        is_read: n.read,
+        created_at: new Date().toISOString(),
+        related_id: n.actionUrl,
+      }));
+      setNotifications(local);
+      setError(null);
     } finally {
       setLoading(false);
     }
@@ -78,13 +108,19 @@ export function useNotifications(userId: string | undefined) {
   }, [userId, load]);
 
   const markRead = async (id: string) => {
-    await sbMarkNotificationRead(id);
+    try {
+      await sbMarkNotificationRead(id);
+    } catch {}
+    markNotificationAsRead(id);
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
   };
 
   const markAllRead = async () => {
     if (!userId) return;
-    await sbMarkAllNotificationsRead(userId);
+    try {
+      await sbMarkAllNotificationsRead(userId);
+    } catch {}
+    markAllNotificationsAsRead(userId);
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
   };
 

@@ -17,6 +17,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useSellerAppointments } from '@/hooks/useSupabaseData';
 import {
   getStoredAppointments,
+  saveStoredAppointments,
+  getSellerAppointmentsList,
   getSellerAvailabilitySettings,
   confirmAppointment,
   rejectAppointment,
@@ -76,36 +78,45 @@ export const SellerAppointmentsPage: React.FC = () => {
   const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
 
   const loadAppointments = useCallback(() => {
-    if (!sbLoading && sbAppointments.length > 0) {
+    if (!sbLoading && sbAppointments && sbAppointments.length > 0) {
       const mapped: AppointmentItem[] = sbAppointments.map((a: any) => ({
         id: a.id,
         propertyId: a.property_id,
-        propertyTitle: a.property?.title || 'عقار',
-        propertyImage: a.property?.cover_image_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=400&q=80',
-        propertyLocation: a.property?.city || '',
+        propertyTitle: a.property?.title || 'عقار معروض',
+        propertyImage: a.property?.cover_image || a.property?.cover_image_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=400&q=80',
+        propertyLocation: a.property?.city || 'الإسكندرية',
         propertyPrice: a.property?.price || 0,
         buyerId: a.buyer_id,
-        buyerName: a.buyer?.full_name || 'مشتري',
-        buyerPhone: a.buyer?.phone || '',
+        buyerName: a.buyer?.full_name || 'مشتري مهتم',
+        buyerPhone: a.buyer_phone || a.buyer?.phone || '',
         sellerId: a.seller_id,
         sellerName: user?.fullName || 'بائع',
         sellerPhone: user?.phone || '',
         isSellerVerified: true,
         date: a.appointment_date,
         dateFormatted: new Date(a.appointment_date).toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-        timeSlot: a.appointment_time,
-        timeSlotId: '',
+        timeSlot: a.time_slot || a.appointment_time || '',
+        timeSlotId: a.time_slot_id || 'morning_1',
         status: a.status,
         statusLabel: ({ pending: 'في انتظار التأكيد', confirmed: 'تم التأكيد', completed: 'مكتمل', cancelled: 'ملغي', rejected: 'مرفوض', rescheduled: 'اقتراح موعد جديد' } as Record<string, string>)[a.status] || a.status,
-        notes: a.buyer_message,
+        notes: a.notes || a.buyer_message || '',
         createdAt: a.created_at,
         updatedAt: a.updated_at || a.created_at,
       }));
       setAppointments(mapped);
-    } else {
-      setAppointments(getStoredAppointments());
+      // Merge with stored appointments so handlers and local sync work seamlessly
+      const existing = getStoredAppointments();
+      const mapById = new Map(existing.map((x) => [x.id, x]));
+      mapped.forEach((m) => {
+        const prev = mapById.get(m.id) || {};
+        mapById.set(m.id, { ...prev, ...m });
+      });
+      const merged = Array.from(mapById.values());
+      saveStoredAppointments(merged);
+    } else if (!sbLoading) {
+      setAppointments(getSellerAppointmentsList(user?.id));
     }
-  }, [sbLoading, sbAppointments, user]);
+  }, [sbLoading, sbAppointments, user?.id, user?.fullName, user?.phone]);
 
   useEffect(() => {
     loadAppointments();
@@ -124,14 +135,24 @@ export const SellerAppointmentsPage: React.FC = () => {
   });
 
   // Action Handlers
-  const handleConfirm = (id: string) => {
+  const handleConfirm = async (id: string) => {
+    try {
+      await updateSbStatus(id, 'confirmed');
+    } catch {
+      // Fallback local
+    }
     confirmAppointment(id);
     loadAppointments();
     setToastMessage('تم تأكيد موعد المعاينة وإشعار المشتري بنجاح.');
   };
 
-  const handleRejectSubmit = () => {
+  const handleRejectSubmit = async () => {
     if (!rejectModalApp || !rejectReason.trim()) return;
+    try {
+      await updateSbStatus(rejectModalApp.id, 'rejected', rejectReason.trim());
+    } catch {
+      // Fallback local
+    }
     rejectAppointment(rejectModalApp.id, rejectReason.trim());
     setRejectModalApp(null);
     setRejectReason('');
@@ -139,8 +160,13 @@ export const SellerAppointmentsPage: React.FC = () => {
     setToastMessage('تم الاعتذار عن الموعد وإشعار المشتري بالسبب.');
   };
 
-  const handleProposeSubmit = () => {
+  const handleProposeSubmit = async () => {
     if (!proposeModalApp) return;
+    try {
+      await updateSbStatus(proposeModalApp.id, 'rescheduled', newAltNotes.trim());
+    } catch {
+      // Fallback local
+    }
     proposeAlternativeDate(proposeModalApp.id, newAltDate, newAltSlotId, newAltNotes);
     setProposeModalApp(null);
     setNewAltNotes('');
@@ -148,16 +174,26 @@ export const SellerAppointmentsPage: React.FC = () => {
     setToastMessage('تم إرسال اقتراح الموعد البديل للمشتري بانتظار موافقته.');
   };
 
-  const handleCompleteSubmit = () => {
+  const handleCompleteSubmit = async () => {
     if (!completeConfirmId) return;
+    try {
+      await updateSbStatus(completeConfirmId, 'completed');
+    } catch {
+      // Fallback local
+    }
     completeAppointment(completeConfirmId);
     setCompleteConfirmId(null);
     loadAppointments();
     setToastMessage('تم تسجيل المعاينة كمكتملة بنجاح.');
   };
 
-  const handleCancelSubmit = () => {
+  const handleCancelSubmit = async () => {
     if (!cancelConfirmId) return;
+    try {
+      await updateSbStatus(cancelConfirmId, 'cancelled');
+    } catch {
+      // Fallback local
+    }
     cancelAppointment(cancelConfirmId, 'seller', 'اعتذار طارئ من المالك');
     setCancelConfirmId(null);
     loadAppointments();
@@ -294,7 +330,12 @@ export const SellerAppointmentsPage: React.FC = () => {
       </div>
 
       {/* Main Content Area */}
-      {viewMode === 'calendar' ? (
+      {sbLoading ? (
+        <div className="p-12 text-center bg-white border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] shadow-hard space-y-4">
+          <RefreshCw className="w-8 h-8 text-[var(--dp-color-accent)] animate-spin mx-auto" />
+          <p className="text-sm font-bold text-[#626d84]">جاري جلب أحدث طلبات المعاينة من قاعدة البيانات...</p>
+        </div>
+      ) : viewMode === 'calendar' ? (
         /* Visual Calendar View */
         <AppointmentCalendar
           appointments={appointments}

@@ -526,7 +526,7 @@ begin
       select 1 from public.appointments
       where seller_id = new.seller_id
         and appointment_date = new.appointment_date
-        and appointment_time = new.appointment_time
+        and time_slot = new.time_slot
         and id != coalesce(new.id, '00000000-0000-0000-0000-000000000000'::uuid)
         and status in ('confirmed')
     ) then

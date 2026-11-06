@@ -203,6 +203,28 @@ export function getStoredAppointments(): AppointmentItem[] {
   return [];
 }
 
+// Helper to get stored appointments specifically filtered for seller
+export function getSellerAppointmentsList(sellerId?: string): AppointmentItem[] {
+  const all = getStoredAppointments();
+  if (!sellerId) return all;
+  const filtered = all.filter((a) => a.sellerId === sellerId);
+  if (filtered.length > 0) return filtered;
+  const demoFallback = all.filter((a) => a.sellerId === 'demo-seller-1');
+  if (demoFallback.length > 0) return demoFallback;
+  return INITIAL_APPOINTMENTS;
+}
+
+// Helper to get stored appointments specifically filtered for buyer
+export function getBuyerAppointmentsList(buyerId?: string): AppointmentItem[] {
+  const all = getStoredAppointments();
+  if (!buyerId) return all;
+  const filtered = all.filter((a) => a.buyerId === buyerId);
+  if (filtered.length > 0) return filtered;
+  const demoFallback = all.filter((a) => a.buyerId === 'demo-buyer-1');
+  if (demoFallback.length > 0) return demoFallback;
+  return INITIAL_APPOINTMENTS;
+}
+
 // Helper to save appointments
 export function saveStoredAppointments(list: AppointmentItem[]) {
   try {
@@ -347,10 +369,11 @@ function pushNotification(
   target: 'buyer' | 'seller',
   title: string,
   message: string,
-  actionUrl: string
+  actionUrl: string,
+  targetUserId?: string
 ) {
   try {
-    // 1. Sync to communicationService
+    // 1. Sync to communicationService for the role (e.g. 'seller' or 'buyer')
     addNotification({
       userId: target,
       category: 'appointments',
@@ -361,19 +384,33 @@ function pushNotification(
       actionLabel: 'عرض الموعد',
     });
 
-    // 2. Sync to Supabase notifications table
-    sbCreateNotification({
-      user_id: target,
-      title,
-      message,
-      type: 'appointments',
-    }).catch(() => {});
+    // 2. Also sync to communicationService for the specific user UUID if provided
+    if (targetUserId && targetUserId !== target && targetUserId !== 'demo-seller-1' && targetUserId !== 'demo-buyer-1') {
+      addNotification({
+        userId: targetUserId,
+        category: 'appointments',
+        categoryLabel: 'المعاينات',
+        title,
+        message,
+        actionUrl,
+        actionLabel: 'عرض الموعد',
+      });
 
-    // 3. Fallback to localStorage
+      // 3. Sync to Supabase notifications table for real-time alerts
+      sbCreateNotification({
+        user_id: targetUserId,
+        title,
+        message,
+        type: 'appointments',
+        related_id: actionUrl,
+      }).catch(() => {});
+    }
+
+    // 4. Fallback to role-based local storage
     const key = target === 'buyer' ? 'sha2ety_buyer_notifications' : 'sha2ety_seller_notifications';
     const existing = JSON.parse(localStorage.getItem(key) || '[]');
     existing.unshift({
-      id: `notif-${Date.now()}`,
+      id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       title,
       message,
       time: 'الآن',
@@ -433,8 +470,8 @@ export function bookAppointment(input: BookAppointmentInput): {
     buyerName: input.buyerName,
     buyerPhone: input.buyerPhone,
     sellerId: sellerId,
-    sellerName: input.property.sellerName || 'محمد السيد',
-    sellerPhone: '01001234567',
+    sellerName: input.property.sellerName || 'محمد السيد (المالك)',
+    sellerPhone: input.property.sellerPhone || '01001234567',
     isSellerVerified: Boolean(input.property.isVerified),
     date: input.date,
     dateFormatted,
@@ -451,24 +488,49 @@ export function bookAppointment(input: BookAppointmentInput): {
 
   // Sync to Supabase
   try {
-    supabase.from('appointments').insert({
-      id: newApp.id,
-      property_id: newApp.propertyId,
-      buyer_id: newApp.buyerId,
-      seller_id: newApp.sellerId,
-      appointment_date: newApp.date,
-      appointment_time: newApp.timeSlot,
-      status: 'pending',
-      buyer_message: newApp.notes || null,
-    }).then();
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUUID(newApp.propertyId) && isUUID(newApp.buyerId) && isUUID(newApp.sellerId)) {
+      const appUuid = isUUID(newApp.id) ? newApp.id : crypto.randomUUID();
+      const payload: any = {
+        id: appUuid,
+        property_id: newApp.propertyId,
+        buyer_id: newApp.buyerId,
+        seller_id: newApp.sellerId,
+        appointment_date: newApp.date,
+        time_slot: newApp.timeSlot,
+        status: 'pending',
+      };
+      if (newApp.buyerPhone) payload.buyer_phone = newApp.buyerPhone;
+      if (newApp.notes) payload.notes = newApp.notes;
+
+      supabase
+        .from('appointments')
+        .insert(payload)
+        .then(
+          ({ error }) => {
+            if (error) console.warn('[Supabase appointments insert warning]:', error.message);
+          },
+          (err) => console.warn('[Supabase appointments error]:', err)
+        );
+    }
   } catch {}
 
-  // Notify Seller
+  // Notify Seller with full details
   pushNotification(
     'seller',
-    'طلب معاينة جديد للعقار',
-    `طلب المشتري ${input.buyerName} موعد معاينة في ${dateFormatted} (${slotResult.slot.label}).`,
-    '/seller/appointments'
+    `طلب معاينة جديد: ${input.property.title}`,
+    `طلب المشتري ${input.buyerName} (هاتف: ${input.buyerPhone}) موعد معاينة لعقارك يوم ${dateFormatted} (${slotResult.slot.label}). ${input.notes ? `ملاحظات المشتري: "${input.notes}"` : ''}`,
+    '/seller/appointments',
+    sellerId
+  );
+
+  // Notify Buyer with confirmation
+  pushNotification(
+    'buyer',
+    `تم إرسال طلب المعاينة بنجاح`,
+    `تم إرسال طلب معاينة "${input.property.title}" في ${dateFormatted} (${slotResult.slot.label}) إلى المالك. ستصلك إشعارات فور الرد.`,
+    '/buyer/appointments',
+    input.buyerId
   );
 
   return { success: true, appointment: newApp };
@@ -494,14 +556,28 @@ export function confirmAppointment(appointmentId: string, notes?: string): boole
   saveStoredAppointments(updated);
 
   try {
-    supabase.from('appointments').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', appointmentId).then();
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUUID(appointmentId)) {
+      supabase.from('appointments').update({ status: 'confirmed', updated_at: new Date().toISOString() }).eq('id', appointmentId).then(undefined, () => {});
+    }
   } catch {}
 
+  // Notify Buyer with full details
   pushNotification(
     'buyer',
     'تم تأكيد موعد المعاينة!',
-    `وافق المالك ${target.sellerName} على موعد المعاينة يوم ${target.dateFormatted}. نتمنى لك زيارة موفقة.`,
-    '/buyer/appointments'
+    `وافق المالك ${target.sellerName} على موعد معاينة "${target.propertyTitle}" يوم ${target.dateFormatted} (${target.timeSlot}). هاتف التواصل مع المالك: ${target.sellerPhone}. ${notes ? `ملاحظات: "${notes}"` : ''}`,
+    '/buyer/appointments',
+    target.buyerId
+  );
+
+  // Notify Seller
+  pushNotification(
+    'seller',
+    'تم تأكيد موعد المعاينة',
+    `تم تأكيد موعد معاينة "${target.propertyTitle}" مع المشتري ${target.buyerName} (هاتف: ${target.buyerPhone}) في ${target.dateFormatted} (${target.timeSlot}).`,
+    '/seller/appointments',
+    target.sellerId
   );
 
   return true;
@@ -527,14 +603,28 @@ export function rejectAppointment(appointmentId: string, reason: string): boolea
   saveStoredAppointments(updated);
 
   try {
-    supabase.from('appointments').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', appointmentId).then();
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUUID(appointmentId)) {
+      supabase.from('appointments').update({ status: 'rejected', notes: reason, updated_at: new Date().toISOString() }).eq('id', appointmentId).then(undefined, () => {});
+    }
   } catch {}
 
+  // Notify Buyer with reason
   pushNotification(
     'buyer',
     'اعتذار عن موعد المعاينة',
-    `اعتذر المالك عن قبول موعد المعاينة للسبب التالي: "${reason}". يمكنك اختيار موعد آخر يناسبك.`,
-    '/buyer/appointments'
+    `اعتذر المالك ${target.sellerName} عن موعد معاينة "${target.propertyTitle}" يوم ${target.dateFormatted}. سبب الاعتذار: "${reason}". يمكنك اختيار موعد آخر مناسب.`,
+    '/buyer/appointments',
+    target.buyerId
+  );
+
+  // Notify Seller
+  pushNotification(
+    'seller',
+    'تم تسجيل الاعتذار عن المعاينة',
+    `تم تسجيل اعتذارك عن موعد معاينة "${target.propertyTitle}" مع المشتري ${target.buyerName}.`,
+    '/seller/appointments',
+    target.sellerId
   );
 
   return true;
@@ -576,14 +666,34 @@ export function proposeAlternativeDate(
   saveStoredAppointments(updated);
 
   try {
-    supabase.from('appointments').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', appointmentId).then();
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUUID(appointmentId)) {
+      supabase.from('appointments').update({
+        status: 'rescheduled',
+        appointment_date: newDate,
+        time_slot: slotConfig.label,
+        notes: notes || 'موعد مقترح بديل من البائع',
+        updated_at: new Date().toISOString(),
+      }).eq('id', appointmentId).then(undefined, () => {});
+    }
   } catch {}
 
+  // Notify Buyer with full proposal details
   pushNotification(
     'buyer',
     'اقترح المالك موعداً بديلاً للمعاينة',
-    `اقترح المالك ${target.sellerName} موعداً بديلاً يوم ${newDateFormatted} (${slotConfig.label}). اضغط لمراجعة الموعد والموافقة عليه.`,
-    '/buyer/appointments'
+    `اقترح المالك ${target.sellerName} موعداً بديلاً لمعاينة "${target.propertyTitle}" يوم ${newDateFormatted} (${slotConfig.label}). ${notes ? `ملاحظات المالك: "${notes}"` : ''}. يرجى مراجعة الموعد والموافقة أو الرفض.`,
+    '/buyer/appointments',
+    target.buyerId
+  );
+
+  // Notify Seller
+  pushNotification(
+    'seller',
+    'تم إرسال اقتراح الموعد البديل',
+    `تم إرسال اقتراح الموعد البديل (${newDateFormatted} - ${slotConfig.label}) لمعاينة "${target.propertyTitle}" إلى المشتري ${target.buyerName}.`,
+    '/seller/appointments',
+    target.sellerId
   );
 
   return true;
@@ -615,14 +725,33 @@ export function acceptAlternativeDate(appointmentId: string): boolean {
   saveStoredAppointments(updated);
 
   try {
-    supabase.from('appointments').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', appointmentId).then();
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUUID(appointmentId)) {
+      supabase.from('appointments').update({
+        status: 'confirmed',
+        appointment_date: proposal.date,
+        time_slot: proposal.timeSlot,
+        updated_at: new Date().toISOString(),
+      }).eq('id', appointmentId).then(undefined, () => {});
+    }
   } catch {}
 
+  // Notify Seller
   pushNotification(
     'seller',
-    'وافق المشتري على الموعد البديل',
-    `وافق المشتري ${target.buyerName} على الموعد المقترح في ${newDateFormatted}. تم تأكيد الموعد في جدولك.`,
-    '/seller/appointments'
+    'وافق المشتري على الموعد البديل!',
+    `وافق المشتري ${target.buyerName} على الموعد المقترح لمعاينة "${target.propertyTitle}" في ${newDateFormatted} (${proposal.timeSlot}). تم تأكيد الموعد في جدولك.`,
+    '/seller/appointments',
+    target.sellerId
+  );
+
+  // Notify Buyer
+  pushNotification(
+    'buyer',
+    'تم تأكيد الموعد البديل',
+    `تم تأكيد موعد معاينة "${target.propertyTitle}" في ${newDateFormatted} (${proposal.timeSlot}) مع المالك ${target.sellerName}.`,
+    '/buyer/appointments',
+    target.buyerId
   );
 
   return true;
@@ -648,14 +777,26 @@ export function declineAlternativeDate(appointmentId: string): boolean {
   saveStoredAppointments(updated);
 
   try {
-    supabase.from('appointments').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', appointmentId).then();
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUUID(appointmentId)) {
+      supabase.from('appointments').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', appointmentId).then(undefined, () => {});
+    }
   } catch {}
 
   pushNotification(
     'seller',
     'رفض المشتري الموعد البديل',
-    `لم يناسب الموعد المقترح المشتري ${target.buyerName} وتم إلغاء الطلب.`,
-    '/seller/appointments'
+    `لم يناسب الموعد المقترح المشتري ${target.buyerName} لمعاينة "${target.propertyTitle}" وتم إلغاء الطلب.`,
+    '/seller/appointments',
+    target.sellerId
+  );
+
+  pushNotification(
+    'buyer',
+    'تم إلغاء طلب المعاينة',
+    `تم إلغاء طلب معاينة "${target.propertyTitle}" بعد عدم ملائمة الموعد المقترح. يمكنك اختيار موعد جديد في أي وقت.`,
+    '/buyer/appointments',
+    target.buyerId
   );
 
   return true;
@@ -684,19 +825,46 @@ export function cancelAppointment(
   );
   saveStoredAppointments(updated);
 
+  try {
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUUID(appointmentId)) {
+      supabase.from('appointments').update({
+        status: 'cancelled',
+        notes: reason || 'تم الإلغاء',
+        updated_at: new Date().toISOString(),
+      }).eq('id', appointmentId).then(undefined, () => {});
+    }
+  } catch {}
+
   if (cancelledBy === 'buyer') {
     pushNotification(
       'seller',
-      'تم إلغاء موعد معاينة',
-      `قام المشتري ${target.buyerName} بإلغاء موعد المعاينة المقرر في ${target.dateFormatted}.`,
-      '/seller/appointments'
+      'تم إلغاء موعد معاينة من المشتري',
+      `قام المشتري ${target.buyerName} بإلغاء موعد المعاينة المقرر في ${target.dateFormatted} لعقار "${target.propertyTitle}". ${reason ? `السبب: "${reason}"` : ''}`,
+      '/seller/appointments',
+      target.sellerId
+    );
+    pushNotification(
+      'buyer',
+      'تم إلغاء موعد المعاينة',
+      `قمت بإلغاء موعد معاينة "${target.propertyTitle}" المقرر في ${target.dateFormatted}.`,
+      '/buyer/appointments',
+      target.buyerId
     );
   } else {
     pushNotification(
       'buyer',
+      'تم إلغاء موعد المعاينة من المالك',
+      `قام المالك ${target.sellerName} بإلغاء موعد المعاينة المقرر في ${target.dateFormatted} لعقار "${target.propertyTitle}". ${reason ? `السبب: "${reason}"` : ''}`,
+      '/buyer/appointments',
+      target.buyerId
+    );
+    pushNotification(
+      'seller',
       'تم إلغاء موعد المعاينة',
-      `قام المالك ${target.sellerName} بإلغاء موعد المعاينة المقرر في ${target.dateFormatted}.`,
-      '/buyer/appointments'
+      `قمت بإلغاء موعد معاينة "${target.propertyTitle}" المقرر في ${target.dateFormatted}.`,
+      '/seller/appointments',
+      target.sellerId
     );
   }
 
@@ -722,16 +890,29 @@ export function completeAppointment(appointmentId: string): boolean {
   saveStoredAppointments(updated);
 
   try {
-    supabase.from('appointments').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', appointmentId).then();
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUUID(appointmentId)) {
+      supabase.from('appointments').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', appointmentId).then(undefined, () => {});
+    }
   } catch {}
 
   pushNotification(
     'buyer',
     'اكتملت المعاينة بنجاح',
-    `شكراً لحضورك معاينة ${target.propertyTitle}. نأمل أن يكون العقار قد نال إعجابك!`,
-    '/buyer/appointments'
+    `شكراً لحضورك معاينة "${target.propertyTitle}". نأمل أن يكون العقار قد نال إعجابك! يمكنك التواصل مع المالك للتفاوض أو إتمام الصفقة.`,
+    '/buyer/appointments',
+    target.buyerId
+  );
+
+  pushNotification(
+    'seller',
+    'تم تسجيل اكتمال المعاينة',
+    `تم تسجيل معاينة "${target.propertyTitle}" مع المشتري ${target.buyerName} كمكتملة بنجاح.`,
+    '/seller/appointments',
+    target.sellerId
   );
 
   return true;
 }
+
 

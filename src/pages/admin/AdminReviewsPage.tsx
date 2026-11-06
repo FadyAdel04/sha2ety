@@ -46,9 +46,13 @@ export const AdminReviewsPage: React.FC = () => {
     try {
       // Try Supabase first, fall back to local service
       const sbData = await sbFetchReviewQueue().catch(() => null);
-      if (sbData && sbData.length >= 0) {
+      const localAdmin = getAdminProperties();
+      const localMap = new Map(localAdmin.map((a) => [a.id, a]));
+
+      if (sbData && sbData.length > 0) {
         // Map Supabase rows to AdminProperty shape for modal compatibility
         const mapped: AdminProperty[] = sbData.map((p: SupabaseProperty) => {
+          const matched = localMap.get(p.id);
           const cover = p.cover_image_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80';
           const imgs = (p.images && p.images.length > 0) ? p.images : [cover];
           return {
@@ -72,11 +76,13 @@ export const AdminReviewsPage: React.FC = () => {
             status: p.status as any,
             reviewStatus: (p.status === 'pending_review' ? 'pending_review' : p.status === 'requires_changes' ? 'requires_changes' : 'published') as any,
             submissionDate: p.created_at?.slice(0, 10) || '',
+            subType: matched?.subType,
+            customDetails: matched?.customDetails,
             seller: {
               id: p.seller_id,
-              name: (p as any).profiles?.full_name || 'بائع',
-              phone: (p as any).profiles?.phone || '',
-              email: (p as any).profiles?.email || '',
+              name: (p as any).profiles?.full_name || matched?.seller?.name || 'بائع',
+              phone: (p as any).profiles?.phone || matched?.seller?.phone || '',
+              email: (p as any).profiles?.email || matched?.seller?.email || '',
               registrationDate: p.created_at?.slice(0, 10) || '',
               isIdentityVerified: true,
               rating: 5,
@@ -84,7 +90,7 @@ export const AdminReviewsPage: React.FC = () => {
               approvedCount: 0,
               rejectedCount: 0,
             },
-            documents: [
+            documents: (matched?.documents && matched.documents.length > 0) ? matched.documents : [
               {
                 id: `doc-${p.id}-1`,
                 name: 'عقد الملكية الموثق أو سند الملكية.pdf',
@@ -95,13 +101,21 @@ export const AdminReviewsPage: React.FC = () => {
                 status: 'pending',
               },
             ],
-            description: p.description || '',
+            description: p.description || matched?.description || '',
             createdAt: p.created_at,
           };
         });
+
+        // Also append any local properties awaiting review that aren't in Supabase response
+        localAdmin.forEach((la) => {
+          if (!mapped.some((m) => m.id === la.id) && (la.reviewStatus === 'pending_review' || la.reviewStatus === 'requires_changes')) {
+            mapped.push(la);
+          }
+        });
+
         setProperties(mapped);
       } else {
-        setProperties(getAdminProperties());
+        setProperties(localAdmin);
       }
     } catch {
       setProperties(getAdminProperties());

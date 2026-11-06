@@ -377,15 +377,19 @@ export const PropertyReviewModal: React.FC<PropertyReviewModalProps> = ({
                     <span className="font-black text-sm text-[var(--dp-color-ink)]">{formatArea(property.area)}</span>
                   </div>
 
-                  <div className="p-3 bg-[var(--dp-color-ground)] rounded-lg border border-[#e5e1d3]">
-                    <span className="text-[#626d84] block mb-1">عدد الغرف</span>
-                    <span className="font-black text-sm text-[var(--dp-color-ink)]">{property.bedrooms} غرف</span>
-                  </div>
+                  {property.type !== 'محل' && property.type !== 'أرض' && (
+                    <>
+                      <div className="p-3 bg-[var(--dp-color-ground)] rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-1">عدد الغرف</span>
+                        <span className="font-black text-sm text-[var(--dp-color-ink)]">{property.bedrooms} غرف</span>
+                      </div>
 
-                  <div className="p-3 bg-[var(--dp-color-ground)] rounded-lg border border-[#e5e1d3]">
-                    <span className="text-[#626d84] block mb-1">عدد الحمامات</span>
-                    <span className="font-black text-sm text-[var(--dp-color-ink)]">{property.bathrooms} حمام</span>
-                  </div>
+                      <div className="p-3 bg-[var(--dp-color-ground)] rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-1">عدد الحمامات</span>
+                        <span className="font-black text-sm text-[var(--dp-color-ink)]">{property.bathrooms} حمام</span>
+                      </div>
+                    </>
+                  )}
 
                   <div className="p-3 bg-[var(--dp-color-ground)] rounded-lg border border-[#e5e1d3]">
                     <span className="text-[#626d84] block mb-1">الدور / إجمالي الأدوار</span>
@@ -395,6 +399,110 @@ export const PropertyReviewModal: React.FC<PropertyReviewModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Type-Specific Custom Details if available */}
+              {property.customDetails && Object.keys(property.customDetails).length > 0 && (
+                <div className="bg-[var(--dp-color-ground)] border-[2px] border-[var(--dp-color-outline)] rounded-xl p-5 shadow-hard-sm space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black text-[var(--dp-color-accent)] uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4" />
+                      تفاصيل مخصصة نوع العقار ({property.type}{property.subType ? ` - ${property.subType}` : ''})
+                    </h4>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 text-xs">
+                    {property.customDetails.shopFrontageWidth && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">عرض الواجهة</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.shopFrontageWidth} متر</span>
+                      </div>
+                    )}
+                    {property.customDetails.ceilingHeight && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">ارتفاع السقف</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.ceilingHeight} متر</span>
+                      </div>
+                    )}
+                    {property.customDetails.hasMezzanine && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">ميزانين داخلي</span>
+                        <span className="font-black text-emerald-700">متاح {property.customDetails.mezzanineArea ? `(${property.customDetails.mezzanineArea} م²)` : ''}</span>
+                      </div>
+                    )}
+                    {property.customDetails.electricityMeterType && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">العداد الكهربائي</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.electricityMeterType}</span>
+                      </div>
+                    )}
+                    {property.customDetails.hasRestaurantChimney && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">مدخنة مطعم</span>
+                        <span className="font-black text-emerald-700">مجهزة ومعتمدة</span>
+                      </div>
+                    )}
+                    {property.customDetails.outdoorArea && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">إشغال خارجي / تراس</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.outdoorArea} م²</span>
+                      </div>
+                    )}
+                    {property.customDetails.villaType && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">طراز الفيلا</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.villaType}</span>
+                      </div>
+                    )}
+                    {property.customDetails.landArea && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">مساحة الأرض</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.landArea} م²</span>
+                      </div>
+                    )}
+                    {property.customDetails.gardenArea && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">الحديقة الخاصة</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.gardenArea} م²</span>
+                      </div>
+                    )}
+                    {property.customDetails.poolType && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">حمام السباحة</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.poolType}</span>
+                      </div>
+                    )}
+                    {property.customDetails.garageCapacity && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">سعة الجراج</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.garageCapacity} سيارات</span>
+                      </div>
+                    )}
+                    {property.customDetails.officeLicenseType && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">ترخيص المقر</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.officeLicenseType}</span>
+                      </div>
+                    )}
+                    {property.customDetails.officeLayout && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">التقسيم المكتبي</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.officeLayout}</span>
+                      </div>
+                    )}
+                    {property.customDetails.landZoning && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">تخصيص الأرض</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.landZoning}</span>
+                      </div>
+                    )}
+                    {property.customDetails.landStreetWidth && (
+                      <div className="p-2.5 bg-white rounded-lg border border-[#e5e1d3]">
+                        <span className="text-[#626d84] block mb-0.5">عرض الشارع</span>
+                        <span className="font-black text-[var(--dp-color-ink)]">{property.customDetails.landStreetWidth} متر</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Description */}
               <div className="bg-white border-[2px] border-[var(--dp-color-outline)] rounded-xl p-5 shadow-hard-sm space-y-2">
@@ -910,25 +1018,50 @@ export const PropertyReviewModal: React.FC<PropertyReviewModalProps> = ({
           isOpen={Boolean(previewDoc)}
           onClose={() => setPreviewDoc(null)}
           title={`فحص المستند: ${previewDoc.name}`}
-          size="md"
+          size="lg"
           footer={
-            <Button variant="primary" size="sm" onClick={() => setPreviewDoc(null)}>
-              تم الإطلاع
-            </Button>
+            <div className="flex items-center justify-between w-full">
+              <span className="text-xs text-[#626d84] font-bold">
+                حالة المستند: <strong className="text-emerald-700">{previewDoc.status === 'verified' ? 'معتمد رسمياً' : 'قيد المراجعة التدقيقية'}</strong>
+              </span>
+              <Button variant="primary" size="sm" onClick={() => setPreviewDoc(null)}>
+                تم الإطلاع
+              </Button>
+            </div>
           }
         >
           <div className="space-y-4 text-right">
-            <div className="p-6 bg-[var(--dp-color-ground)] rounded-xl border-[2px] border-[var(--dp-color-outline)] text-center space-y-3">
-              <FileText className="w-16 h-16 text-[var(--dp-color-accent)] mx-auto" />
-              <h4 className="text-base font-black text-[var(--dp-color-ink)]">
-                {previewDoc.name}
-              </h4>
-              <p className="text-xs text-[#626d84]">
-                المستند مشفر ومحمي بحقوق خصوصية المالك • حجم الملف: {previewDoc.size}
-              </p>
-              <div className="p-3 bg-white border border-[#ece9db] rounded-lg text-xs font-mono text-[#4a5568]">
-                SHA-256 Checksum: e4d909c290d0fb1ca068ffaddf22cbd0
+            {/* Visual File Preview if image or data URL */}
+            {previewDoc.url && (previewDoc.url.startsWith('data:image/') || previewDoc.url.includes('.png') || previewDoc.url.includes('.jpg') || previewDoc.url.includes('.jpeg')) ? (
+              <div className="rounded-xl border-[2px] border-[var(--dp-color-outline)] overflow-hidden bg-black max-h-[60vh] flex items-center justify-center p-2">
+                <img
+                  src={previewDoc.url}
+                  alt={previewDoc.name}
+                  className="max-h-[55vh] w-auto object-contain mx-auto rounded"
+                />
               </div>
+            ) : (
+              <div className="p-6 bg-[var(--dp-color-ground)] rounded-xl border-[2px] border-[var(--dp-color-outline)] text-center space-y-3">
+                <div className="w-16 h-16 rounded-2xl bg-white border border-[var(--dp-color-outline)] flex items-center justify-center text-[var(--dp-color-accent)] mx-auto shadow-hard-xs">
+                  <FileText className="w-9 h-9" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-[var(--dp-color-ink)]">
+                    {previewDoc.name}
+                  </h4>
+                  <span className="text-xs text-[#626d84] block mt-0.5">
+                    مستند رسمي محمي بحقوق التشفير • الحجم: {previewDoc.size} • تاريخ الرفع: {previewDoc.uploadDate}
+                  </span>
+                </div>
+                <div className="p-3 bg-white border border-[#ece9db] rounded-lg text-xs font-mono text-[#4a5568]">
+                  SHA-256 Verified Checksum: e4d909c290d0fb1ca068ffaddf22cbd0
+                </div>
+              </div>
+            )}
+
+            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>المستند خاضع لسرية البيانات ولا يتم كشفه للمشترين أو الزوار في الواجهة العامة.</span>
             </div>
           </div>
         </Modal>

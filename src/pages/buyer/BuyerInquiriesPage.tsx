@@ -223,6 +223,7 @@ export const BuyerInquiriesPage: React.FC = () => {
         onClose={() => setActiveConvId(null)}
         conversationId={activeConvId}
         currentUserRole="buyer"
+        currentUserId={user?.id}
         onUpdate={refreshList}
       />
     </DashboardLayout>

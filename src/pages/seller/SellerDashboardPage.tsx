@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
@@ -27,7 +27,17 @@ import {
   useSellerStats,
   useSellerProperties as useSellerPropertiesSb,
   useSellerInquiries,
+  useSellerAppointments,
+  useNotifications,
 } from '@/hooks/useSupabaseData';
+import {
+  getUserConversations,
+  getUserNotifications,
+  sendChatMessage,
+} from '@/services/communicationService';
+import {
+  getSellerAppointmentsList,
+} from '@/services/appointmentService';
 import {
   Building2,
   CalendarCheck,
@@ -59,9 +69,107 @@ export const SellerDashboardPage: React.FC = () => {
   const [stats, setStats] = useState<SellerStatistics | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Supabase hooks for real-time stats and inquiries
+  // Supabase hooks for real-time stats, inquiries, appointments, and notifications
   const sbStats = useSellerStats(user?.id);
-  const sbInquiries = useSellerInquiries(user?.id);
+  const { inquiries: sbInquiries, reply: replySbInquiry } = useSellerInquiries(user?.id);
+  const { appointments: sbAppointments } = useSellerAppointments(user?.id);
+  const { notifications: sbNotifications } = useNotifications(user?.id);
+
+  // Dynamic Inquiries
+  const dynamicInquiries = useMemo(() => {
+    if (sbInquiries && sbInquiries.length > 0) {
+      return sbInquiries.slice(0, 3).map((inq: any) => ({
+        id: inq.id,
+        sender: inq.buyer?.full_name || 'مشتري مهتم',
+        time: new Date(inq.created_at).toLocaleDateString('ar-EG', {
+          day: 'numeric',
+          month: 'short',
+        }),
+        prop: inq.property?.title || 'عقار معروض',
+        msg: inq.message || '',
+      }));
+    }
+    const localConvs = getUserConversations('seller', user?.id);
+    return localConvs.slice(0, 3).map((c) => ({
+      id: c.id,
+      sender: c.buyerName,
+      time: c.lastMessageAt || 'مؤخراً',
+      prop: c.propertyTitle,
+      msg: c.lastMessage,
+    }));
+  }, [sbInquiries, user?.id]);
+
+  // Dynamic Appointments
+  const dynamicAppointments = useMemo(() => {
+    if (sbAppointments && sbAppointments.length > 0) {
+      return sbAppointments.slice(0, 3).map((app: any) => ({
+        id: app.id,
+        buyer: app.buyer?.full_name || 'مشتري مهتم',
+        phone: app.buyer_phone || app.buyer?.phone || '',
+        prop: app.property?.title || 'عقار معروض',
+        date: new Date(app.appointment_date).toLocaleDateString('ar-EG', { weekday: 'short', day: 'numeric', month: 'short' }),
+        time: app.appointment_time,
+        status: app.status,
+        statusText: ({
+          pending: 'بانتظار موافقتك',
+          confirmed: 'مؤكد',
+          completed: 'مكتمل',
+          cancelled: 'ملغي',
+          rejected: 'معتذر عنه',
+          rescheduled: 'موعد مقترح',
+        } as Record<string, string>)[app.status] || app.status,
+      }));
+    }
+    const localApps = getSellerAppointmentsList(user?.id);
+    return localApps.slice(0, 3).map((app) => ({
+      id: app.id,
+      buyer: app.buyerName,
+      phone: app.buyerPhone,
+      prop: app.propertyTitle,
+      date: app.dateFormatted || app.date,
+      time: app.timeSlot,
+      status: app.status,
+      statusText: app.statusLabel || (app.status === 'confirmed' ? 'مؤكد' : 'بانتظار موافقتك'),
+    }));
+  }, [sbAppointments, user?.id]);
+
+  // Dynamic Notifications
+  const dynamicNotifications = useMemo(() => {
+    if (sbNotifications && sbNotifications.length > 0) {
+      return sbNotifications.slice(0, 3).map((n) => ({
+        id: n.id,
+        title: n.title,
+        desc: n.message,
+        time: new Date(n.created_at).toLocaleDateString('ar-EG', {
+          day: 'numeric',
+          month: 'short',
+        }),
+        icon:
+          n.type === 'properties' ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+          ) : n.type === 'appointments' ? (
+            <CalendarCheck className="w-4 h-4 text-purple-600" />
+          ) : (
+            <Clock className="w-4 h-4 text-amber-600" />
+          ),
+      }));
+    }
+    const localNotifs = getUserNotifications(user?.id || 'seller');
+    return localNotifs.slice(0, 3).map((n) => ({
+      id: n.id,
+      title: n.title,
+      desc: n.message,
+      time: n.timestamp,
+      icon:
+        n.category === 'properties' ? (
+          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+        ) : n.category === 'appointments' ? (
+          <CalendarCheck className="w-4 h-4 text-purple-600" />
+        ) : (
+          <Clock className="w-4 h-4 text-amber-600" />
+        ),
+    }));
+  }, [sbNotifications, user?.id]);
 
   // Modals state
   const [feedbackModalProperty, setFeedbackModalProperty] = useState<SellerProperty | null>(null);
@@ -186,14 +294,30 @@ export const SellerDashboardPage: React.FC = () => {
     }
   };
 
-  const handleSendReply = () => {
-    if (!replyInquiryModal) return;
-    setToastMessage(`تم إرسال ردك إلى ${replyInquiryModal.sender} بنجاح`);
-    setReplyInquiryModal(null);
-    setReplyText('');
+  const handleSendReply = async () => {
+    if (!replyInquiryModal || !replyText.trim()) return;
+    setActionLoading(true);
+    try {
+      if (replySbInquiry) {
+        await replySbInquiry(replyInquiryModal.id, replyText.trim());
+      }
+    } catch {
+      sendChatMessage(
+        replyInquiryModal.id,
+        'seller',
+        user?.fullName || 'البائع',
+        user?.id || 'seller',
+        replyText.trim()
+      );
+    } finally {
+      setActionLoading(false);
+      setToastMessage(`تم إرسال ردك إلى ${replyInquiryModal.sender} بنجاح`);
+      setReplyInquiryModal(null);
+      setReplyText('');
+    }
   };
 
-  const sellerName = user?.fullName || 'محمد السيد';
+  const sellerName = user?.fullName || 'المستخدم';
 
   return (
     <DashboardLayout
@@ -243,7 +367,7 @@ export const SellerDashboardPage: React.FC = () => {
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--dp-color-selection)] border border-[var(--dp-color-outline)] text-xs font-black text-[var(--dp-color-accent)] mb-1">
               <span className="w-2 h-2 rounded-full bg-[var(--dp-color-accent)] animate-pulse" />
-              حساب بائع معتمد
+              {user?.isVerified ? 'حساب بائع معتمد وموثق' : 'حساب بائع معتمد'}
             </div>
             <h2 className="text-2xl sm:text-3xl font-black text-[var(--dp-color-ink)]">
               أهلاً بيك، {sellerName}
@@ -779,60 +903,57 @@ export const SellerDashboardPage: React.FC = () => {
                   </h4>
                 </div>
                 <Link to="/seller/inquiries" className="text-xs font-bold text-[var(--dp-color-accent)] hover:underline">
-                  الكل
+                  الكل ({dynamicInquiries.length})
                 </Link>
               </div>
 
               <div className="space-y-3">
-                {[
-                  {
-                    id: 'inq-1',
-                    sender: 'محمود فهمي',
-                    time: 'منذ ساعتين',
-                    prop: 'شقة ميفيدا - التجمع',
-                    msg: 'مساء الخير، هل يوجد إمكانية لتسهيلات في السداد على سنة أم السعر كاش فقط؟',
-                  },
-                  {
-                    id: 'inq-2',
-                    sender: 'إنجي حسن',
-                    time: 'أمس',
-                    prop: 'دوبلكس النرجس',
-                    msg: 'هل السعر شامل وديعة الصيانة وحصة الجراج في العقار؟',
-                  },
-                ].map((inq) => (
-                  <div
-                    key={inq.id}
-                    className="p-3.5 rounded-xl border border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] space-y-2 text-right"
-                  >
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-black text-[var(--dp-color-ink)]">{inq.sender}</span>
-                      <span className="text-[#626d84]">{inq.time}</span>
-                    </div>
-                    <p className="text-xs text-[#374151] line-clamp-2 leading-relaxed">
-                      "{inq.msg}"
-                    </p>
-                    <div className="flex items-center justify-between pt-1">
-                      <span className="text-[11px] font-bold text-[var(--dp-color-accent)]">
-                        {inq.prop}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          setReplyInquiryModal({
-                            id: inq.id,
-                            sender: inq.sender,
-                            msg: inq.msg,
-                            prop: inq.prop,
-                          })
-                        }
-                        className="py-1 px-2.5 text-xs h-auto"
-                      >
-                        رد سريع
-                      </Button>
-                    </div>
+                {dynamicInquiries.length === 0 ? (
+                  <div className="p-6 text-center bg-[var(--dp-color-ground)] rounded-xl border border-[var(--dp-color-outline)] space-y-2">
+                    <MessageSquare className="w-7 h-7 text-[#8b95aa] mx-auto" />
+                    <span className="text-xs font-black text-[var(--dp-color-ink)] block">
+                      لا توجد استفسارات جديدة
+                    </span>
+                    <span className="text-[11px] text-[#626d84] block">
+                      ستظهر هنا استفسارات المشترين فور إرسالها لعقاراتك.
+                    </span>
                   </div>
-                ))}
+                ) : (
+                  dynamicInquiries.map((inq) => (
+                    <div
+                      key={inq.id}
+                      className="p-3.5 rounded-xl border border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] space-y-2 text-right"
+                    >
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-black text-[var(--dp-color-ink)]">{inq.sender}</span>
+                        <span className="text-[#626d84]">{inq.time}</span>
+                      </div>
+                      <p className="text-xs text-[#374151] line-clamp-2 leading-relaxed">
+                        "{inq.msg}"
+                      </p>
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-[11px] font-bold text-[var(--dp-color-accent)] line-clamp-1">
+                          {inq.prop}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setReplyInquiryModal({
+                              id: inq.id,
+                              sender: inq.sender,
+                              msg: inq.msg,
+                              prop: inq.prop,
+                            })
+                          }
+                          className="py-1 px-2.5 text-xs h-auto shrink-0 mr-2"
+                        >
+                          رد سريع
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -858,51 +979,42 @@ export const SellerDashboardPage: React.FC = () => {
                   </h4>
                 </div>
                 <Link to="/seller/appointments" className="text-xs font-bold text-[var(--dp-color-accent)] hover:underline">
-                  الجدول
+                  الجدول ({dynamicAppointments.length})
                 </Link>
               </div>
 
               <div className="space-y-3">
-                {[
-                  {
-                    id: 'app-1',
-                    buyer: 'كريم عبد الله',
-                    phone: '01098765432',
-                    prop: 'شقة ميفيدا، التجمع الخامس',
-                    date: 'الخميس، ٥ نوفمبر',
-                    time: '٠٢:٠٠ م - ٠٣:٠٠ م',
-                    status: 'confirmed',
-                    statusText: 'مؤكد',
-                  },
-                  {
-                    id: 'app-2',
-                    buyer: 'سارة المنشاوي',
-                    phone: '01123456789',
-                    prop: 'دوبلكس النرجس',
-                    date: 'السبت، ٧ نوفمبر',
-                    time: '٠٤:٣٠ م - ٠٥:٣٠ م',
-                    status: 'pending',
-                    statusText: 'بانتظار موافقتك',
-                  },
-                ].map((app) => (
-                  <div
-                    key={app.id}
-                    className="p-3.5 rounded-xl border border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] space-y-2 text-right"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-black text-xs text-[var(--dp-color-ink)]">{app.buyer}</span>
-                      <Badge variant={app.status === 'confirmed' ? 'fresh' : 'warm'} size="sm">
-                        {app.statusText}
-                      </Badge>
-                    </div>
-                    <div className="text-xs text-[#526078] font-bold">
-                      {app.date} • {app.time}
-                    </div>
-                    <div className="text-[11px] font-bold text-[var(--dp-color-accent)] line-clamp-1">
-                      {app.prop}
-                    </div>
+                {dynamicAppointments.length === 0 ? (
+                  <div className="p-6 text-center bg-[var(--dp-color-ground)] rounded-xl border border-[var(--dp-color-outline)] space-y-2">
+                    <CalendarCheck className="w-7 h-7 text-[#8b95aa] mx-auto" />
+                    <span className="text-xs font-black text-[var(--dp-color-ink)] block">
+                      لا توجد طلبات معاينة حالية
+                    </span>
+                    <span className="text-[11px] text-[#626d84] block">
+                      ستظهر مواعيد المعاينة المحجوزة لعقاراتك هنا.
+                    </span>
                   </div>
-                ))}
+                ) : (
+                  dynamicAppointments.map((app) => (
+                    <div
+                      key={app.id}
+                      className="p-3.5 rounded-xl border border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] space-y-2 text-right"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-black text-xs text-[var(--dp-color-ink)]">{app.buyer}</span>
+                        <Badge variant={app.status === 'confirmed' ? 'fresh' : 'warm'} size="sm">
+                          {app.statusText}
+                        </Badge>
+                      </div>
+                      <div className="text-xs text-[#526078] font-bold">
+                        {app.date} • {app.time}
+                      </div>
+                      <div className="text-[11px] font-bold text-[var(--dp-color-accent)] line-clamp-1">
+                        {app.prop}
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -928,51 +1040,44 @@ export const SellerDashboardPage: React.FC = () => {
                   </h4>
                 </div>
                 <Link to="/seller/notifications" className="text-xs font-bold text-[var(--dp-color-accent)] hover:underline">
-                  الإشعارات
+                  الإشعارات ({dynamicNotifications.length})
                 </Link>
               </div>
 
               <div className="space-y-3">
-                {[
-                  {
-                    title: 'اعتماد شارة "موثق" لشقة ميفيدا',
-                    desc: 'اكتملت مراجعة مستندات الملكية ورخصة البناء بنجاح.',
-                    time: 'اليوم، ١٠:٣٠ ص',
-                    icon: <CheckCircle2 className="w-4 h-4 text-emerald-600" />,
-                  },
-                  {
-                    title: 'ملاحظة قانونية على شاليه الساحل',
-                    desc: 'مطلوب استيفاء صورة المخالصة المالية الصادرة من القرية.',
-                    time: 'أمس، ٠٤:١٥ م',
-                    icon: <AlertTriangle className="w-4 h-4 text-rose-600" />,
-                  },
-                  {
-                    title: 'استلام دوبلكس النرجس للمراجعة',
-                    desc: 'الملف قيد تدقيق الإدارة القانونية حالياً.',
-                    time: 'منذ يومين',
-                    icon: <Clock className="w-4 h-4 text-amber-600" />,
-                  },
-                ].map((item, i) => (
-                  <div
-                    key={i}
-                    className="p-3 rounded-xl border border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] flex items-start gap-2.5 text-right"
-                  >
-                    <span className="p-1 rounded-lg bg-white border border-[var(--dp-color-outline)] mt-0.5 shrink-0">
-                      {item.icon}
+                {dynamicNotifications.length === 0 ? (
+                  <div className="p-6 text-center bg-[var(--dp-color-ground)] rounded-xl border border-[var(--dp-color-outline)] space-y-2">
+                    <CheckCircle2 className="w-7 h-7 text-[#8b95aa] mx-auto" />
+                    <span className="text-xs font-black text-[var(--dp-color-ink)] block">
+                      لا توجد إشعارات جديدة
                     </span>
-                    <div className="flex-1 min-w-0">
-                      <span className="font-black text-xs text-[var(--dp-color-ink)] block">
-                        {item.title}
-                      </span>
-                      <span className="text-[11px] text-[#626d84] block mt-0.5 line-clamp-2">
-                        {item.desc}
-                      </span>
-                      <span className="text-[10px] text-[#9ca3af] block mt-1">
-                        {item.time}
-                      </span>
-                    </div>
+                    <span className="text-[11px] text-[#626d84] block">
+                      ستصلك إشعارات حالة العقارات والمراجعات القانونية هنا.
+                    </span>
                   </div>
-                ))}
+                ) : (
+                  dynamicNotifications.map((item, i) => (
+                    <div
+                      key={item.id || i}
+                      className="p-3 rounded-xl border border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] flex items-start gap-2.5 text-right"
+                    >
+                      <span className="p-1 rounded-lg bg-white border border-[var(--dp-color-outline)] mt-0.5 shrink-0">
+                        {item.icon}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <span className="font-black text-xs text-[var(--dp-color-ink)] block">
+                          {item.title}
+                        </span>
+                        <span className="text-[11px] text-[#626d84] block mt-0.5 line-clamp-2">
+                          {item.desc}
+                        </span>
+                        <span className="text-[10px] text-[#9ca3af] block mt-1">
+                          {item.time}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 

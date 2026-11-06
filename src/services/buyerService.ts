@@ -22,7 +22,7 @@ export interface BuyerAppointment {
   isSellerVerified: boolean;
   date: string; // e.g. "السبت، ٧ نوفمبر ٢٠٢٦"
   time: string; // e.g. "٠٤:٣٠ م"
-  status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'rejected' | 'rescheduled';
   statusLabel: string;
   notes?: string;
   createdAt: string;
@@ -127,11 +127,21 @@ export function removeBuyerFavorite(propertyId: string): PropertyItem[] {
 // ----------------------------------------------------------------------
 // APPOINTMENTS METHODS (100% Dynamic)
 // ----------------------------------------------------------------------
-export function getBuyerAppointments(): BuyerAppointment[] {
+export function getBuyerAppointments(buyerId?: string): BuyerAppointment[] {
   try {
     const storedAppointments = getStoredAppointments();
     if (storedAppointments && storedAppointments.length > 0) {
-      return storedAppointments.map((app) => ({
+      const filtered = buyerId
+        ? storedAppointments.filter(
+            (app) =>
+              app.buyerId === buyerId ||
+              (!buyerId && app.buyerId === 'demo-buyer-1') ||
+              (buyerId === 'demo-buyer-1' && app.buyerId === 'demo-buyer-1') ||
+              app.buyerId === 'buyer'
+          )
+        : storedAppointments;
+
+      return filtered.map((app) => ({
         id: app.id,
         propertyId: app.propertyId,
         propertyTitle: app.propertyTitle,
@@ -143,7 +153,7 @@ export function getBuyerAppointments(): BuyerAppointment[] {
         isSellerVerified: app.isSellerVerified,
         date: app.dateFormatted || app.date,
         time: app.timeSlot,
-        status: (app.status === 'rescheduled' || app.status === 'rejected') ? 'cancelled' : app.status,
+        status: app.status,
         statusLabel: app.statusLabel,
         notes: app.notes,
         createdAt: app.createdAt,

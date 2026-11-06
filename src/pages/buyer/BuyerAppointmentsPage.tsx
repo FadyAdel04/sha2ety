@@ -14,6 +14,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useBuyerAppointments } from '@/hooks/useSupabaseData';
 import {
   getStoredAppointments,
+  getBuyerAppointmentsList,
+  saveStoredAppointments,
   acceptAlternativeDate,
   declineAlternativeDate,
   cancelAppointment,
@@ -76,8 +78,15 @@ export const BuyerAppointmentsPage: React.FC = () => {
         updatedAt: a.updated_at || a.created_at,
       }));
       setAppointments(mapped);
+      const existing = getStoredAppointments();
+      const mapById = new Map(existing.map((x) => [x.id, x]));
+      mapped.forEach((m) => {
+        const prev = mapById.get(m.id) || {};
+        mapById.set(m.id, { ...prev, ...m });
+      });
+      saveStoredAppointments(Array.from(mapById.values()));
     } else {
-      setAppointments(getStoredAppointments());
+      setAppointments(getBuyerAppointmentsList(user?.id));
     }
   }, [sbLoading, sbAppointments, user]);
 
@@ -86,21 +95,24 @@ export const BuyerAppointmentsPage: React.FC = () => {
   }, [loadAppointments]);
 
   // 1. Accept Alternative Date
-  const handleAcceptAlternative = (id: string) => {
+  const handleAcceptAlternative = async (id: string) => {
     acceptAlternativeDate(id);
     loadAppointments();
     setToastMessage('تم قبول الموعد البديل وتأكيد المعاينة بنجاح!');
   };
 
   // 2. Decline Alternative Date
-  const handleDeclineAlternative = (id: string) => {
+  const handleDeclineAlternative = async (id: string) => {
     declineAlternativeDate(id);
     loadAppointments();
     setToastMessage('تم رفض الموعد المقترح وإلغاء الطلب.');
   };
 
   // 3. Cancel Appointment
-  const handleCancelAppointment = (id: string) => {
+  const handleCancelAppointment = async (id: string) => {
+    try {
+      await cancelSb(id);
+    } catch {}
     cancelAppointment(id, 'buyer', 'إلغاء من قبل المشتري');
     setCancelModalId(null);
     loadAppointments();

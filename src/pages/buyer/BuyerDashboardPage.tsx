@@ -87,13 +87,13 @@ export const BuyerDashboardPage: React.FC = () => {
         date: new Date(a.appointment_date).toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long' }),
         time: a.appointment_time,
         status: a.status,
-        statusLabel: ({ pending: 'في انتظار التأكيد', confirmed: 'تم التأكيد', completed: 'مكتملة', cancelled: 'ملغية', rejected: 'مرفوضة' } as Record<string, string>)[a.status] || a.status,
+        statusLabel: ({ pending: 'في انتظار التأكيد', confirmed: 'تم التأكيد', completed: 'مكتملة', cancelled: 'ملغية', rejected: 'مرفوضة', rescheduled: 'اقتراح موعد جديد' } as Record<string, string>)[a.status] || a.status,
         notes: a.buyer_message,
         createdAt: a.created_at,
       }));
       setAppointments(mapped);
     } else {
-      setAppointments(getBuyerAppointments());
+      setAppointments(getBuyerAppointments(user?.id));
     }
 
     if (sbStats.stats) {

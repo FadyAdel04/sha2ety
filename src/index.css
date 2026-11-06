@@ -4,17 +4,17 @@
    Authoritative Design Tokens (Playful Geometric)
    ---------------------------------------------------- */
 :root {
-  --dp-color-ground: #fffdf5;
-  --dp-color-panel: #ffffff;
-  --dp-color-ink: #253044;
-  --dp-color-outline: #252b3a;
-  --dp-color-accent: #6434df;
-  --dp-color-accent-secondary: #ff78c5;
-  --dp-color-accent-warm: #ffd05b;
-  --dp-color-accent-fresh: #9bf1cd;
-  --dp-color-field-soft: #e9fff5;
-  --dp-color-selection: #f1ebff;
-  --dp-color-rule-muted: #b8b6c5;
+  --dp-color-ground: #F0F7F8;
+  --dp-color-panel: #FFFFFF;
+  --dp-color-ink: #16324F;
+  --dp-color-outline: #16324F;
+  --dp-color-accent: #227C9D;
+  --dp-color-accent-secondary: #17A398;
+  --dp-color-accent-warm: #FFCB77;
+  --dp-color-accent-fresh: #B8E0D2;
+  --dp-color-field-soft: #E8F3F5;
+  --dp-color-selection: #D5EAE9;
+  --dp-color-rule-muted: #B8D0D5;
 
   --dp-typography-display: "PlayfulGeometricDisplay", "Host Grotesk", "Cairo", sans-serif;
   --dp-typography-reading: "PlayfulGeometricReading", "Instrument Sans", "Cairo", sans-serif;
@@ -77,7 +77,12 @@ body {
   overflow-x: hidden;
 }
 
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
   font-family: var(--dp-typography-display);
   color: var(--dp-color-ink);
   font-weight: 800;
@@ -142,9 +147,11 @@ h1, h2, h3, h4, h5, h6 {
   .shadow-hard {
     box-shadow: 3px 3px 0px var(--dp-color-outline);
   }
+
   .shadow-hard-lg {
     box-shadow: 4px 4px 0px var(--dp-color-outline);
   }
+
   .shadow-hard-xl {
     box-shadow: 5px 5px 0px var(--dp-color-outline);
   }
@@ -153,7 +160,7 @@ h1, h2, h3, h4, h5, h6 {
 /* Interactive elements */
 .interactive-lift {
   transition: transform var(--dp-motion-interaction) cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow var(--dp-motion-interaction) cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow var(--dp-motion-interaction) cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .interactive-lift:hover {
@@ -174,12 +181,16 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Accessibility: Reduced motion */
 @media (prefers-reduced-motion: reduce) {
-  *, ::before, ::after {
+
+  *,
+  ::before,
+  ::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+
   .interactive-lift:hover,
   .interactive-lift:active {
     transform: none !important;
@@ -206,4 +217,3 @@ h1, h2, h3, h4, h5, h6 {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--dp-color-accent);
 }
-

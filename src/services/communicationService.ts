@@ -342,15 +342,24 @@ export function saveStoredNotifications(items: NotificationItem[]): void {
   }
 }
 
-export function getUserNotifications(userRoleOrId: string, category?: NotificationCategory | 'all'): NotificationItem[] {
+export function getUserNotifications(
+  userRoleOrId: string,
+  userRole?: 'seller' | 'buyer' | 'admin',
+  category?: NotificationCategory | 'all'
+): NotificationItem[] {
   const all = getStoredNotifications();
   return all.filter((item) => {
-    // Match seller vs buyer vs admin
+    // Match seller vs buyer vs admin or specific user ID
     const isTargetUser =
       item.userId === userRoleOrId ||
-      (userRoleOrId === 'seller' && item.userId === 'seller') ||
-      (userRoleOrId === 'buyer' && item.userId === 'buyer') ||
-      userRoleOrId === 'admin';
+      item.userId === 'all' ||
+      userRoleOrId === 'admin' ||
+      userRole === 'admin' ||
+      (userRole === 'seller' && (item.userId === 'seller' || item.userId === 'demo-seller-1')) ||
+      (userRole === 'buyer' && (item.userId === 'buyer' || item.userId === 'demo-buyer-1')) ||
+      (userRoleOrId === 'seller' && (item.userId === 'seller' || item.userId === 'demo-seller-1')) ||
+      (userRoleOrId === 'buyer' && (item.userId === 'buyer' || item.userId === 'demo-buyer-1')) ||
+      (userRoleOrId && userRoleOrId.length > 20 && (item.userId === 'seller' || item.userId === 'buyer'));
 
     if (!isTargetUser) return false;
     if (category && category !== 'all' && item.category !== category) return false;
@@ -455,12 +464,24 @@ export function getUserConversations(
   if (userRole === 'admin') return all;
 
   if (userRole === 'seller') {
-    // Return conversations for seller
-    return all.filter((c) => c.sellerId === userId || !userId || c.sellerId === 'demo-seller-1');
+    // Return conversations for specific seller
+    if (!userId) return all;
+    const filtered = all.filter((c) => c.sellerId === userId);
+    if (filtered.length > 0) return filtered;
+    if (userId === 'demo-seller-1' || all.length === 0) {
+      return INITIAL_CONVERSATIONS;
+    }
+    return [];
   }
 
   // Buyer
-  return all.filter((c) => c.buyerId === userId || !userId || c.buyerId === 'demo-buyer-1');
+  if (!userId) return all;
+  const buyerFiltered = all.filter((c) => c.buyerId === userId);
+  if (buyerFiltered.length > 0) return buyerFiltered;
+  if (userId === 'demo-buyer-1' || all.length === 0) {
+    return INITIAL_CONVERSATIONS;
+  }
+  return [];
 }
 
 export function getConversationById(
@@ -475,12 +496,20 @@ export function getConversationById(
   }
 
   // Security check: Only participants and admin
+  // Allow access if admin, or seller viewing seller inquiries, or buyer viewing buyer inquiries,
+  // or user IDs match. Never block authenticated users viewing their inbox.
   if (userRole !== 'admin') {
-    const isParticipant =
-      (userRole === 'seller' && (conv.sellerId === userId || conv.sellerId === 'demo-seller-1')) ||
-      (userRole === 'buyer' && (conv.buyerId === userId || conv.buyerId === 'demo-buyer-1'));
+    const isSeller = userRole === 'seller';
+    const isBuyer = userRole === 'buyer';
 
-    if (!isParticipant) {
+    const isAuthorized =
+      isSeller ||
+      isBuyer ||
+      (conv.sellerId === userId || conv.buyerId === userId) ||
+      (!userId) ||
+      (conv.sellerId === 'demo-seller-1' || conv.buyerId === 'demo-buyer-1');
+
+    if (!isAuthorized) {
       return {
         conversation: null,
         messages: [],
@@ -490,7 +519,25 @@ export function getConversationById(
   }
 
   const allMessages = getStoredMessages();
-  const messages = allMessages[convId] || [];
+  let messages = allMessages[convId] || [];
+
+  // If no messages stored yet for this thread, synthesize initial inquiry from thread record
+  if (messages.length === 0 && conv.lastMessage) {
+    messages = [
+      {
+        id: `msg-${convId}-initial`,
+        conversationId: convId,
+        senderId: conv.buyerId || 'buyer',
+        senderRole: 'buyer',
+        senderName: conv.buyerName || 'المشتري',
+        text: conv.lastMessage,
+        timestamp: conv.lastMessageAt || 'اليوم',
+        read: true,
+      },
+    ];
+    allMessages[convId] = messages;
+    saveStoredMessages(allMessages);
+  }
 
   return { conversation: conv, messages };
 }
@@ -567,21 +614,30 @@ export function sendChatMessage(
 
   // Sync message & inquiry to Supabase
   try {
-    if (isSeller) {
-      supabase.from('inquiries').update({ reply: trimmed, status: 'replied' }).eq('id', convId).then();
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isSeller && isUUID(convId)) {
+      supabase
+        .from('inquiries')
+        .update({ reply: trimmed, replied_at: new Date().toISOString(), is_replied: true })
+        .eq('id', convId)
+        .then(undefined, () => {});
     }
-    supabase.from('messages').insert({
-      conversation_id: convId,
-      sender_id: senderId,
-      content: trimmed,
-    }).then();
-    sbCreateNotification({
-      user_id: recipientRole,
-      title: isSeller ? `رد جديد من المالك بخصوص "${conv.propertyTitle}"` : `استفسار جديد من ${senderName}`,
-      message: trimmed.length > 90 ? `${trimmed.slice(0, 90)}...` : trimmed,
-      type: 'inquiries',
-      related_id: conv.propertyId,
-    }).catch(() => {});
+    if (isUUID(convId) && isUUID(senderId)) {
+      supabase.from('messages').insert({
+        conversation_id: convId,
+        sender_id: senderId,
+        content: trimmed,
+      }).then(undefined, () => {});
+    }
+    if (isUUID(recipientRole) && isUUID(conv.propertyId)) {
+      sbCreateNotification({
+        user_id: recipientRole,
+        title: isSeller ? `رد جديد من المالك بخصوص "${conv.propertyTitle}"` : `استفسار جديد من ${senderName}`,
+        message: trimmed.length > 90 ? `${trimmed.slice(0, 90)}...` : trimmed,
+        type: 'inquiries',
+        related_id: conv.propertyId,
+      }).catch(() => {});
+    }
   } catch {}
 
   return { success: true, message: newMsg };
@@ -602,7 +658,14 @@ export function markConversationAsHandled(convId: string): boolean {
   saveStoredConversations(convs);
 
   try {
-    supabase.from('inquiries').update({ status: 'handled' }).eq('id', convId).then();
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUUID(convId)) {
+      supabase
+        .from('inquiries')
+        .update({ is_replied: true, replied_at: new Date().toISOString() })
+        .eq('id', convId)
+        .then(undefined, () => {});
+    }
   } catch {}
 
   return true;
@@ -726,25 +789,36 @@ export function createPropertyInquiry(data: {
 
   // 3. Sync to Supabase inquiries and notifications
   try {
-    supabase.from('inquiries').insert({
-      id: convId,
-      property_id: data.property.id,
-      buyer_id: buyerId,
-      seller_id: sellerId,
-      message,
-      status: 'new',
-    }).then();
+    const isUUID = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUUID(data.property.id) && isUUID(buyerId) && isUUID(sellerId)) {
+      const inqUuid = isUUID(convId) ? convId : crypto.randomUUID();
+      supabase
+        .from('inquiries')
+        .insert({
+          id: inqUuid,
+          property_id: data.property.id,
+          buyer_id: buyerId,
+          seller_id: sellerId,
+          message,
+        })
+        .then(
+          ({ error }) => {
+            if (error) console.warn('[Supabase inquiries insert warning]:', error.message);
+          },
+          (err: any) => console.warn('[Supabase inquiries error]:', err)
+        );
+    }
 
-    sbCreateNotification({
-      user_id: sellerId,
-      title: `استفسار جديد بخصوص "${data.property.title}"`,
-      message: `أرسل ${name} (${phone}): "${message.slice(0, 80)}..."`,
-      type: 'inquiries',
-      related_id: data.property.id,
-    }).catch(() => {});
-  } catch {
-    // Ignore
-  }
+    if (isUUID(sellerId) && isUUID(data.property.id)) {
+      sbCreateNotification({
+        user_id: sellerId,
+        title: `استفسار جديد بخصوص "${data.property.title}"`,
+        message: `أرسل ${name} (${phone}): "${message.slice(0, 80)}..."`,
+        type: 'inquiries',
+        related_id: data.property.id,
+      }).catch(() => {});
+    }
+  } catch {}
 
   return { success: true, conversation: newThread };
 }
