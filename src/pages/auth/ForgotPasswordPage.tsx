@@ -52,7 +52,7 @@ export const ForgotPasswordPage: React.FC = () => {
           </div>
         </Link>
 
-        <Link to="/login">
+        <Link to="/login" className="hidden sm:inline-block">
           <Button variant="outline" size="sm">
             العودة لتسجيل الدخول
           </Button>

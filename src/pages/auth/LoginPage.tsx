@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, UserRole } from '@/context/AuthContext';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -15,13 +15,29 @@ import {
   KeyRound,
   ShieldCheck,
   Home,
+  User,
+  Check,
+  ShieldAlert,
+  LogOut,
 } from 'lucide-react';
+
+export type LoginRoleTab = 'buyer' | 'seller' | 'admin';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { login, getRoleRedirectUrl } = useAuth();
+  const { user, isAuthenticated, login, switchUserRole, getRoleRedirectUrl, logout } = useAuth();
 
+  const redirectPath = searchParams.get('redirect');
+
+  // Determine initial role from redirect or default to 'buyer'
+  const getInitialRole = (): LoginRoleTab => {
+    if (redirectPath?.startsWith('/seller')) return 'seller';
+    if (redirectPath?.startsWith('/admin')) return 'admin';
+    return 'buyer';
+  };
+
+  const [selectedRole, setSelectedRole] = useState<LoginRoleTab>(getInitialRole);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -29,7 +45,74 @@ export const LoginPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const redirectPath = searchParams.get('redirect');
+  // Set default credentials on mount or role swap
+  const roleCredentials: Record<LoginRoleTab, { email: string; label: string; dashboard: string }> = {
+    buyer: {
+      email: 'buyer@sha2ety.eg',
+      label: 'مشتري',
+      dashboard: '/buyer/dashboard',
+    },
+    seller: {
+      email: 'seller@sha2ety.eg',
+      label: 'بائع معتمد',
+      dashboard: '/seller/dashboard',
+    },
+    admin: {
+      email: 'admin@sha2ety.eg',
+      label: 'مشرف النظام',
+      dashboard: '/admin/dashboard',
+    },
+  };
+
+  // Helper to validate and calculate safe redirect without 403 loops
+  const getSafeRedirectUrl = (role: UserRole, targetRedirect?: string | null): string => {
+    if (!targetRedirect || targetRedirect === '/login' || targetRedirect === '/register') {
+      return getRoleRedirectUrl(role);
+    }
+
+    const isSellerPath = targetRedirect.startsWith('/seller');
+    const isBuyerPath = targetRedirect.startsWith('/buyer');
+    const isAdminPath = targetRedirect.startsWith('/admin');
+
+    // Admin can access admin, seller, or buyer paths
+    if (role === 'admin') {
+      return targetRedirect;
+    }
+
+    // Seller can only access seller or public paths
+    if (role === 'seller') {
+      if (isAdminPath || isBuyerPath) {
+        return '/seller/dashboard';
+      }
+      return targetRedirect;
+    }
+
+    // Buyer can only access buyer or public paths
+    if (role === 'buyer') {
+      if (isAdminPath || isSellerPath) {
+        return '/buyer/dashboard';
+      }
+      return targetRedirect;
+    }
+
+    return getRoleRedirectUrl(role);
+  };
+
+  // Swap to selected role and autofill its demo credentials
+  const handleRoleTabSelect = (role: LoginRoleTab) => {
+    setSelectedRole(role);
+    setEmail(roleCredentials[role].email);
+    setPassword('Sha2ety@2026');
+    setError(null);
+  };
+
+  // Auto-fill upon initial page load
+  useEffect(() => {
+    const initial = getInitialRole();
+    setSelectedRole(initial);
+    setEmail(roleCredentials[initial].email);
+    setPassword('Sha2ety@2026');
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,35 +137,29 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    if (redirectPath) {
-      navigate(redirectPath, { replace: true });
-    } else {
-      navigate(getRoleRedirectUrl(result.role), { replace: true });
-    }
+    const targetRole = result.role || selectedRole;
+    const destination = getSafeRedirectUrl(targetRole, redirectPath);
+    navigate(destination, { replace: true });
   };
 
-  // Quick fill helper for review and testing
-  const handleQuickFill = async (roleEmail: string, autoLogin = false) => {
-    setEmail(roleEmail);
-    setPassword('Sha2ety@2026');
+  // Instant login handler for swapping between accounts seamlessly
+  const handleInstantLogin = async (targetRole: UserRole) => {
     setError(null);
+    setSelectedRole(targetRole);
+    setEmail(roleCredentials[targetRole].email);
+    setPassword('Sha2ety@2026');
+    setIsLoading(true);
 
-    if (autoLogin) {
-      setIsLoading(true);
-      const result = await login(roleEmail, 'Sha2ety@2026', rememberMe);
-      setIsLoading(false);
+    const result = await switchUserRole(targetRole);
+    setIsLoading(false);
 
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-
-      if (redirectPath) {
-        navigate(redirectPath, { replace: true });
-      } else {
-        navigate(getRoleRedirectUrl(result.role), { replace: true });
-      }
+    if (result.error) {
+      setError(result.error);
+      return;
     }
+
+    const destination = getSafeRedirectUrl(result.role, redirectPath);
+    navigate(destination, { replace: true });
   };
 
   return (
@@ -103,7 +180,7 @@ export const LoginPage: React.FC = () => {
           </div>
         </Link>
 
-        <Link to="/">
+        <Link to="/" className="hidden sm:inline-block">
           <Button variant="ghost" size="sm" rightIcon={<Home className="w-4 h-4" />}>
             الرئيسية
           </Button>
@@ -114,22 +191,22 @@ export const LoginPage: React.FC = () => {
       <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
           {/* Side 1: Welcome Headline, Description & Static Geometric Assembly */}
-          <div className="lg:col-span-6 text-right space-y-6">
+          <div className="lg:col-span-5 text-right space-y-6">
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[var(--dp-color-accent-warm)] border-[2px] border-[var(--dp-color-outline)] text-xs font-black shadow-hard-sm">
               <Sparkles className="w-4 h-4 stroke-[2.5]" />
               <span>مرحباً بعودتك</span>
             </div>
 
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-[var(--dp-color-ink)] leading-tight">
+            <h1 className="text-4xl sm:text-5xl font-black text-[var(--dp-color-ink)] leading-tight">
               أهلاً بيك في شقتي
             </h1>
 
-            <p className="text-base sm:text-lg text-[#4a5568] leading-relaxed max-w-lg font-medium">
-              سجل دخولك لمتابعة عقاراتك المعروضة، مواعيد المعاينة الميدانية، واستكشاف أحدث الفرص العقارية الموثوقة في مصر.
+            <p className="text-base text-[#4a5568] leading-relaxed max-w-lg font-medium">
+              سجل دخولك أو بدل حسابك التجريبي لمتابعة عقاراتك المعروضة، مواعيد المعاينة، أو إدارة المنصة. يتم توجيه كل مستخدم تلقائياً إلى لوحة التحكم الخاصة برتبته.
             </p>
 
-            {/* Static Geometric Illustration with Elegant Property Image */}
-            <div className="relative pt-4 max-w-[440px]">
+            {/* Static Geometric Illustration with Property Image */}
+            <div className="relative pt-4 max-w-[420px]">
               {/* Violet backing plate */}
               <div
                 className="absolute inset-0 bg-[var(--dp-color-accent)] rounded-[calc(var(--dp-radius-corner)+8px)] translate-x-3 translate-y-3 border-[3px] border-[var(--dp-color-outline)]"
@@ -165,7 +242,7 @@ export const LoginPage: React.FC = () => {
           </div>
 
           {/* Side 2: White Outlined Form Panel with Violet Offset Backing */}
-          <div className="lg:col-span-6 relative">
+          <div className="lg:col-span-7 relative">
             {/* Violet Offset Backing Layer */}
             <div
               className="absolute inset-0 bg-[var(--dp-color-accent)] rounded-[calc(var(--dp-radius-corner)+8px)] translate-x-3 translate-y-3 sm:translate-x-4 sm:translate-y-4 border-[3px] border-[var(--dp-color-outline)]"
@@ -173,22 +250,137 @@ export const LoginPage: React.FC = () => {
             />
 
             {/* White Form Panel */}
-            <div className="relative bg-[var(--dp-color-panel)] border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] p-7 sm:p-10 shadow-hard text-right">
-              <div className="mb-6 border-b-2 border-[#ece9db] pb-4">
-                <Badge variant="primary" className="mb-2">
-                  دخول آمن
-                </Badge>
-                <h2 className="text-2xl sm:text-3xl font-black text-[var(--dp-color-ink)]">
-                  تسجيل الدخول
-                </h2>
-                <p className="text-xs sm:text-sm text-[#626d84] mt-1 font-medium">
-                  أدخل بريدك الإلكتروني وكلمة المرور لمتابعة حسابك
-                </p>
+            <div className="relative bg-[var(--dp-color-panel)] border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] p-6 sm:p-9 shadow-hard text-right">
+              {/* Active Logged-in session notice */}
+              {isAuthenticated && user && (
+                <div className="mb-5 p-3.5 bg-amber-50 border-[2.5px] border-amber-400 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-between gap-3 text-amber-900">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                    <span>
+                      مسجل حالياً كـ: <strong>{user.fullName}</strong> ({user.role === 'admin' ? 'مشرف' : user.role === 'seller' ? 'بائع' : 'مشتري'})
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="warm"
+                      size="sm"
+                      onClick={() => navigate(getRoleRedirectUrl(user.role), { replace: true })}
+                      className="text-xs py-1 px-2.5"
+                    >
+                      لوحة التحكم
+                    </Button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await logout();
+                        handleRoleTabSelect(selectedRole);
+                      }}
+                      className="p-1.5 rounded-lg border border-amber-400 bg-white hover:bg-amber-100 text-rose-600 cursor-pointer"
+                      title="تسجيل الخروج للتبديل"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="mb-5 border-b-2 border-[#ece9db] pb-4 flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <Badge variant="primary" className="mb-1.5">
+                    دخول آمن وموثق
+                  </Badge>
+                  <h2 className="text-2xl sm:text-3xl font-black text-[var(--dp-color-ink)]">
+                    تسجيل الدخول
+                  </h2>
+                </div>
+                <span className="text-xs font-bold text-[#626d84]">
+                  اختر نوع الحساب للتبديل السريع
+                </span>
+              </div>
+
+              {/* ----------------------------------------------------
+                  1. Role Swap Tabs (مشتري / بائع / مشرف)
+                 ---------------------------------------------------- */}
+              <div className="mb-5">
+                <label className="block text-xs font-black text-[#526078] mb-2">
+                  تبديل حساب المستخدم (انقر للتبديل وملء البيانات):
+                </label>
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                  {/* Tab 1: مشتري */}
+                  <button
+                    type="button"
+                    onClick={() => handleRoleTabSelect('buyer')}
+                    className={`p-3 rounded-xl border-[2.5px] transition-all text-center cursor-pointer select-none flex flex-col items-center justify-center gap-1.5 ${
+                      selectedRole === 'buyer'
+                        ? 'border-[var(--dp-color-outline)] bg-[var(--dp-color-accent-fresh)] shadow-hard-sm -translate-y-0.5'
+                        : 'border-[#d0d7de] bg-[var(--dp-color-ground)] hover:bg-white text-[#4a5568]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Home className="w-4 h-4 stroke-[2.5]" />
+                      <span className="text-xs sm:text-sm font-black">حساب مشتري</span>
+                    </div>
+                    <span className="text-[10px] font-bold text-[#526078] hidden sm:block">
+                      لوحة المشتري
+                    </span>
+                  </button>
+
+                  {/* Tab 2: بائع */}
+                  <button
+                    type="button"
+                    onClick={() => handleRoleTabSelect('seller')}
+                    className={`p-3 rounded-xl border-[2.5px] transition-all text-center cursor-pointer select-none flex flex-col items-center justify-center gap-1.5 ${
+                      selectedRole === 'seller'
+                        ? 'border-[var(--dp-color-outline)] bg-[var(--dp-color-accent-warm)] shadow-hard-sm -translate-y-0.5'
+                        : 'border-[#d0d7de] bg-[var(--dp-color-ground)] hover:bg-white text-[#4a5568]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Building className="w-4 h-4 stroke-[2.5]" />
+                      <span className="text-xs sm:text-sm font-black">حساب بائع</span>
+                    </div>
+                    <span className="text-[10px] font-bold text-[#526078] hidden sm:block">
+                      لوحة البائع
+                    </span>
+                  </button>
+
+                  {/* Tab 3: مشرف */}
+                  <button
+                    type="button"
+                    onClick={() => handleRoleTabSelect('admin')}
+                    className={`p-3 rounded-xl border-[2.5px] transition-all text-center cursor-pointer select-none flex flex-col items-center justify-center gap-1.5 ${
+                      selectedRole === 'admin'
+                        ? 'border-[var(--dp-color-outline)] bg-[var(--dp-color-accent-secondary)] text-white shadow-hard-sm -translate-y-0.5'
+                        : 'border-[#d0d7de] bg-[var(--dp-color-ground)] hover:bg-white text-[#4a5568]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
+                      <span className="text-xs sm:text-sm font-black">مشرف النظام</span>
+                    </div>
+                    <span className="text-[10px] font-bold opacity-80 hidden sm:block">
+                      لوحة الإدارة
+                    </span>
+                  </button>
+                </div>
+
+                {/* Role destination prompt */}
+                <div className="mt-2.5 px-3 py-1.5 rounded-lg bg-[var(--dp-color-ground)] border border-[#e2e8f0] text-[11px] font-bold text-[#475569] flex items-center justify-between">
+                  <span>
+                    الوجهة بعد تسجيل الدخول:{' '}
+                    <strong className="text-[var(--dp-color-accent)]">
+                      {roleCredentials[selectedRole].dashboard}
+                    </strong>
+                  </span>
+                  <Badge variant="fresh" size="sm">
+                    {roleCredentials[selectedRole].label}
+                  </Badge>
+                </div>
               </div>
 
               {/* Error banner */}
               {error && (
-                <div className="mb-5 p-3.5 bg-rose-50 border-[2px] border-rose-500 rounded-xl text-rose-700 text-xs sm:text-sm font-bold flex items-center gap-2">
+                <div className="mb-4 p-3.5 bg-rose-50 border-[2px] border-rose-500 rounded-xl text-rose-700 text-xs sm:text-sm font-bold flex items-center gap-2">
                   <span>⚠</span>
                   <span>{error}</span>
                 </div>
@@ -265,13 +457,56 @@ export const LoginPage: React.FC = () => {
                     isLoading={isLoading}
                     rightIcon={<LogIn className="w-5 h-5 stroke-[2.5]" />}
                   >
-                    تسجيل الدخول
+                    تسجيل الدخول كـ ({roleCredentials[selectedRole].label})
                   </Button>
                 </div>
               </form>
 
+              {/* ----------------------------------------------------
+                  2. One-Click Instant Login Swapping Bar
+                 ---------------------------------------------------- */}
+              <div className="mt-5 p-3.5 bg-[var(--dp-color-ground)] rounded-xl border-2 border-[var(--dp-color-outline)] text-right">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-black text-[#1e293b] block">
+                    الدخول الفوري المباشر (نقرة واحدة للتبديل والتوجه للوحة التحكم):
+                  </span>
+                  <Sparkles className="w-4 h-4 text-amber-500" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-bold">
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onClick={() => handleInstantLogin('buyer')}
+                    className="px-3 py-2 bg-white border-2 border-[var(--dp-color-outline)] rounded-lg hover:bg-[var(--dp-color-accent-fresh)] hover:-translate-y-0.5 transition-all cursor-pointer shadow-hard-sm flex items-center justify-center gap-1.5"
+                  >
+                    <Home className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>دخول مشتري</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onClick={() => handleInstantLogin('seller')}
+                    className="px-3 py-2 bg-white border-2 border-[var(--dp-color-outline)] rounded-lg hover:bg-[var(--dp-color-accent-warm)] hover:-translate-y-0.5 transition-all cursor-pointer shadow-hard-sm flex items-center justify-center gap-1.5"
+                  >
+                    <Building className="w-3.5 h-3.5 text-amber-600" />
+                    <span>دخول بائع</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onClick={() => handleInstantLogin('admin')}
+                    className="px-3 py-2 bg-white border-2 border-[var(--dp-color-outline)] rounded-lg hover:bg-[var(--dp-color-accent-secondary)] hover:text-white hover:-translate-y-0.5 transition-all cursor-pointer shadow-hard-sm flex items-center justify-center gap-1.5"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-purple-600" />
+                    <span>دخول مشرف</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Control 3: إنشاء حساب جديد */}
-              <div className="mt-6 pt-5 border-t-2 border-[#ece9db] text-center text-xs sm:text-sm font-bold text-[#626d84]">
+              <div className="mt-5 pt-4 border-t-2 border-[#ece9db] text-center text-xs sm:text-sm font-bold text-[#626d84]">
                 ليس لديك حساب بعد؟{' '}
                 <Link
                   to="/register"
@@ -279,36 +514,6 @@ export const LoginPage: React.FC = () => {
                 >
                   إنشاء حساب جديد في شقتي
                 </Link>
-              </div>
-
-              {/* Quick Fill Testing Helper Bar */}
-              <div className="mt-6 p-3.5 bg-[var(--dp-color-ground)] rounded-xl border border-[var(--dp-color-outline)] text-right">
-                <span className="text-[11px] font-black text-[#526078] block mb-2">
-                  تجربة الدخول السريع (بيئات الاختبار):
-                </span>
-                <div className="flex flex-wrap gap-2 text-xs font-bold">
-                  <button
-                    type="button"
-                    onClick={() => handleQuickFill('seller@sha2ety.eg')}
-                    className="px-2.5 py-1 bg-white border border-[var(--dp-color-outline)] rounded-lg hover:bg-[var(--dp-color-accent-warm)] transition-colors cursor-pointer"
-                  >
-                    حساب بائع
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickFill('buyer@sha2ety.eg')}
-                    className="px-2.5 py-1 bg-white border border-[var(--dp-color-outline)] rounded-lg hover:bg-[var(--dp-color-accent-fresh)] transition-colors cursor-pointer"
-                  >
-                    حساب مشتري
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickFill('admin@sha2ety.eg', true)}
-                    className="px-2.5 py-1 bg-white border border-[var(--dp-color-outline)] rounded-lg hover:bg-[var(--dp-color-accent-secondary)] hover:text-white transition-colors cursor-pointer"
-                  >
-                    حساب مشرف (دخول فوري)
-                  </button>
-                </div>
               </div>
             </div>
           </div>

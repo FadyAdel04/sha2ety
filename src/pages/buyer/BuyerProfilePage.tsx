@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, UserRole } from '@/context/AuthContext';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -19,10 +20,14 @@ import {
   CheckCircle2,
   AlertTriangle,
   Info,
+  LogOut,
+  Building,
 } from 'lucide-react';
 
 export const BuyerProfilePage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, switchUserRole, logout } = useAuth();
+  const navigate = useNavigate();
+  const [isSwitching, setIsSwitching] = useState(false);
 
   const [fullName, setFullName] = useState(user?.fullName || 'كريم عبد الله');
   const [phone, setPhone] = useState(user?.phone || '01098765432');
@@ -359,6 +364,70 @@ export const BuyerProfilePage: React.FC = () => {
           </div>
         </div>
       </form>
+
+      {/* Account Switching & Session Utilities */}
+      <section className="bg-[var(--dp-color-panel)] border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] p-5 sm:p-6 shadow-hard text-right space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b-2 border-[#ece9db]">
+          <h3 className="text-base font-black text-[var(--dp-color-ink)] flex items-center gap-2">
+            <Lock className="w-4 h-4 text-purple-600" />
+            إدارة الجلسة وتبديل الحساب
+          </h3>
+          <Badge variant="fresh" size="sm">
+            حساب مشتري
+          </Badge>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <span className="text-xs font-black text-[#526078] block">
+              التبديل الفوري بين الحسابات التجريبية:
+            </span>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isSwitching}
+                onClick={async () => {
+                  setIsSwitching(true);
+                  const res = await switchUserRole('seller');
+                  setIsSwitching(false);
+                  if (!res.error) navigate('/seller/dashboard', { replace: true });
+                }}
+                className="px-3 py-1.5 rounded-lg border-2 border-[var(--dp-color-outline)] bg-white hover:bg-[var(--dp-color-accent-warm)] text-xs font-black transition-all cursor-pointer shadow-hard-sm flex items-center gap-1.5"
+              >
+                <Building className="w-3.5 h-3.5 text-amber-600" />
+                <span>حساب البائع (محمد السيد)</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isSwitching}
+                onClick={async () => {
+                  setIsSwitching(true);
+                  const res = await switchUserRole('admin');
+                  setIsSwitching(false);
+                  if (!res.error) navigate('/admin/dashboard', { replace: true });
+                }}
+                className="px-3 py-1.5 rounded-lg border-2 border-[var(--dp-color-outline)] bg-white hover:bg-[var(--dp-color-accent-secondary)] hover:text-white text-xs font-black transition-all cursor-pointer shadow-hard-sm flex items-center gap-1.5"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-purple-600" />
+                <span>مشرف النظام (م. أحمد مهران)</span>
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={async () => {
+              await logout();
+              navigate('/login', { replace: true });
+            }}
+            className="px-4 py-2 rounded-xl border-2 border-rose-300 bg-white hover:bg-rose-50 text-rose-600 text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 shadow-sm"
+          >
+            <LogOut className="w-4 h-4 stroke-[2.5]" />
+            <span>تسجيل الخروج من الحساب</span>
+          </button>
+        </div>
+      </section>
 
       {/* Modal: Change Email Verification Process */}
       <Modal

@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, UserRole } from '@/context/AuthContext';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { PropertyCard, PropertyItem } from '@/components/ui/PropertyCard';
@@ -17,7 +17,6 @@ import {
   useRecentlyViewed,
 } from '@/hooks/useSupabaseData';
 import {
-  // Fall back to local if not authenticated
   getBuyerFavorites,
   getBuyerAppointments,
   getBuyerStatistics,
@@ -26,25 +25,24 @@ import {
   BuyerStatistics,
   BuyerAppointment,
 } from '@/services/buyerService';
+import { getUserConversations } from '@/services/communicationService';
 import {
   Heart,
   CalendarCheck,
-  CheckCircle2,
   History,
   Compass,
-  ArrowLeft,
-  Clock,
   MapPin,
   User,
   Phone,
-  AlertCircle,
-  ExternalLink,
-  Trash2,
-  Sparkles,
+  MessageSquare,
+  Search,
+  Building,
+  ShieldCheck,
+  LogOut,
 } from 'lucide-react';
 
 export const BuyerDashboardPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, switchUserRole, logout } = useAuth();
   const navigate = useNavigate();
 
   // Supabase hooks (authenticated)
@@ -58,76 +56,79 @@ export const BuyerDashboardPage: React.FC = () => {
   const [favorites, setFavorites] = useState<PropertyItem[]>([]);
   const [appointments, setAppointments] = useState<BuyerAppointment[]>([]);
   const [recentlyViewed, setRecentlyViewed] = useState<PropertyItem[]>([]);
+  const [inquiriesCount, setInquiriesCount] = useState(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [removeFavId, setRemoveFavId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'favorites' | 'appointments' | 'viewed'>('favorites');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSwitching, setIsSwitching] = useState(false);
 
-  // Merge Supabase data with local fallback
+  // Load and merge data
   useEffect(() => {
     const isSupabaseReady = !sbFavs.loading && !sbApps.loading && !sbStats.loading;
-    if (!isSupabaseReady) return;
+    if (isSupabaseReady) {
+      if (sbFavs.favorites.length > 0) {
+        setFavorites(sbFavs.favorites);
+      } else {
+        setFavorites(getBuyerFavorites());
+      }
 
-    if (sbFavs.favorites.length > 0) {
-      setFavorites(sbFavs.favorites);
-    } else {
-      setFavorites(getBuyerFavorites());
-    }
+      if (sbApps.appointments.length > 0) {
+        const mapped: BuyerAppointment[] = sbApps.appointments.map((a: any) => ({
+          id: a.id,
+          propertyId: a.property_id,
+          propertyTitle: a.property?.title || 'عقار مميز',
+          propertyImage: a.property?.cover_image_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=400&q=80',
+          propertyLocation: a.property?.city || 'القاهرة',
+          propertyPrice: a.property?.price || 0,
+          sellerName: a.seller?.full_name || 'المالك',
+          sellerPhone: a.seller?.phone || '01001234567',
+          isSellerVerified: true,
+          date: new Date(a.appointment_date).toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long' }),
+          time: a.appointment_time,
+          status: a.status,
+          statusLabel: ({ pending: 'قيد الانتظار', confirmed: 'مؤكد', completed: 'مكتمل', cancelled: 'ملغي' } as Record<string, string>)[a.status] || a.status,
+          notes: a.buyer_message,
+          createdAt: a.created_at,
+        }));
+        setAppointments(mapped);
+      } else {
+        setAppointments(getBuyerAppointments(user?.id));
+      }
 
-    if (sbApps.appointments.length > 0) {
-      // Map Supabase appointments shape to BuyerAppointment
-      const mapped: BuyerAppointment[] = sbApps.appointments.map((a: any) => ({
-        id: a.id,
-        propertyId: a.property_id,
-        propertyTitle: a.property?.title || 'عقار',
-        propertyImage: a.property?.cover_image_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=400&q=80',
-        propertyLocation: a.property?.city || '',
-        propertyPrice: a.property?.price || 0,
-        sellerName: a.seller?.full_name || 'البائع',
-        sellerPhone: a.seller?.phone || '',
-        isSellerVerified: true,
-        date: new Date(a.appointment_date).toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long' }),
-        time: a.appointment_time,
-        status: a.status,
-        statusLabel: ({ pending: 'في انتظار التأكيد', confirmed: 'تم التأكيد', completed: 'مكتملة', cancelled: 'ملغية', rejected: 'مرفوضة', rescheduled: 'اقتراح موعد جديد' } as Record<string, string>)[a.status] || a.status,
-        notes: a.buyer_message,
-        createdAt: a.created_at,
-      }));
-      setAppointments(mapped);
-    } else {
-      setAppointments(getBuyerAppointments(user?.id));
-    }
-
-    if (sbStats.stats) {
-      setStats(sbStats.stats);
-    } else {
-      getBuyerStatistics().then(setStats);
-    }
-
-    if (sbViewed.properties.length > 0) {
-      setRecentlyViewed(sbViewed.properties);
-    } else {
-      setRecentlyViewed(getBuyerRecentlyViewed());
-    }
-
-    setLoading(false);
-  }, [sbFavs.loading, sbApps.loading, sbStats.loading, sbViewed.loading]);
-
-  // Also handle the case where user is not logged in to Supabase (demo)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (loading) {
-        // Fallback to localStorage after timeout
+      if (sbStats.stats) {
+        setStats(sbStats.stats);
+      } else {
         getBuyerStatistics().then(setStats);
+      }
+
+      if (sbViewed.properties.length > 0) {
+        setRecentlyViewed(sbViewed.properties);
+      } else {
+        setRecentlyViewed(getBuyerRecentlyViewed());
+      }
+
+      setLoading(false);
+    } else {
+      // Fallback timer
+      const timer = setTimeout(() => {
         setFavorites(getBuyerFavorites());
         setAppointments(getBuyerAppointments());
+        getBuyerStatistics().then(setStats);
         setRecentlyViewed(getBuyerRecentlyViewed());
         setLoading(false);
-      }
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [loading]);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+
+    try {
+      setInquiriesCount(getUserConversations('buyer', user?.id).length);
+    } catch {
+      setInquiriesCount(0);
+    }
+  }, [sbFavs.loading, sbApps.loading, sbStats.loading, sbViewed.loading, user?.id]);
 
   const handleRemoveFavorite = async (propertyId: string) => {
-    // Try Supabase removal first
     if (user?.id) {
       await sbFavs.remove(propertyId).catch(() => {});
     }
@@ -136,7 +137,7 @@ export const BuyerDashboardPage: React.FC = () => {
       ? sbFavs.favorites.filter((f) => f.id !== propertyId)
       : updated);
     setRemoveFavId(null);
-    setToastMessage('تمت إزالة العقار من مفضلتك بنجاح.');
+    setToastMessage('تم حذف العقار من مفضلتك.');
     if (sbStats.stats) {
       sbStats.reload();
     } else {
@@ -144,14 +145,43 @@ export const BuyerDashboardPage: React.FC = () => {
     }
   };
 
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      navigate(`/properties?search=${encodeURIComponent(searchQuery.trim())}`);
+    } else {
+      navigate('/properties');
+    }
+  };
+
+  const handleRoleSwitch = async (targetRole: UserRole) => {
+    setIsSwitching(true);
+    try {
+      const res = await switchUserRole(targetRole);
+      if (!res.error) {
+        if (res.role === 'seller') navigate('/seller/dashboard', { replace: true });
+        else if (res.role === 'admin') navigate('/admin/dashboard', { replace: true });
+        else navigate('/buyer/dashboard', { replace: true });
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSwitching(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
+
   const buyerName = user?.fullName || 'كريم عبد الله';
-  const upcomingConfirmed = appointments.find((a) => a.status === 'confirmed');
 
   return (
     <DashboardLayout
       role="buyer"
-      title="الرئيسية"
-      subtitle="كل العقارات اللي مهتم بيها ومواعيدك القادمة في مكان واحد."
+      title="مساحة المشتري"
+      subtitle="استعرض عقاراتك المفضلة، تابع مواعيد المعاينات وتواصل مع البائعين بسهولة."
       actions={
         <Link to="/properties">
           <Button
@@ -159,14 +189,14 @@ export const BuyerDashboardPage: React.FC = () => {
             size="sm"
             rightIcon={<Compass className="w-4 h-4 stroke-[2.5]" />}
           >
-            استكشف العقارات
+            تصفح العقارات
           </Button>
         </Link>
       }
     >
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="mb-6 animate-fadeIn">
+        <div className="mb-4 animate-fadeIn">
           <Notification
             variant="success"
             title="تم بنجاح"
@@ -176,187 +206,212 @@ export const BuyerDashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* 2. Welcome Section */}
-      <section className="relative overflow-hidden bg-[var(--dp-color-panel)] border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] p-6 sm:p-8 shadow-hard mb-8 text-right">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--dp-color-selection)] border border-[var(--dp-color-outline)] text-xs font-black text-[var(--dp-color-accent)] mb-1">
-              <span className="w-2 h-2 rounded-full bg-[var(--dp-color-accent)] animate-pulse" />
-              حساب مشتري موثق
+      {/* ----------------------------------------------------
+          1. Hero & Fast Property Search Card
+         ---------------------------------------------------- */}
+      <section className="bg-[var(--dp-color-panel)] border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] p-4 sm:p-7 shadow-hard text-right">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-[var(--dp-color-accent-fresh)] border border-[var(--dp-color-outline)] text-xs font-black text-[var(--dp-color-ink)] mb-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
+              <span>مرحباً، {buyerName}</span>
             </div>
-            <h2 className="text-2xl sm:text-3xl font-black text-[var(--dp-color-ink)]">
-              أهلاً بيك في شقتي، {buyerName}
+            <h2 className="text-xl sm:text-2xl font-black text-[var(--dp-color-ink)]">
+              جاهز تلاقي عقارك الجاي؟
             </h2>
-            <p className="text-sm sm:text-base text-[#526078] font-bold max-w-xl leading-relaxed">
-              كل العقارات اللي مهتم بيها ومواعيدك القادمة في مكان واحد.
+            <p className="text-xs sm:text-sm text-[#526078] font-bold mt-1">
+              ابحث بين آلاف العقارات المفحوصة والموثقة قانونياً في مصر.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2">
             <Link to="/properties">
-              <Button
-                variant="primary"
-                size="md"
-                rightIcon={<Compass className="w-5 h-5 stroke-[2.5]" />}
-                className="w-full sm:w-auto"
-              >
-                تصفح العقارات المتاحة
-              </Button>
-            </Link>
-            <Link to="/buyer/appointments">
-              <Button variant="outline" size="md" className="w-full sm:w-auto">
-                جدول مواعيدي
+              <Button variant="primary" size="sm" rightIcon={<Compass className="w-4 h-4" />}>
+                استكشف الآن
               </Button>
             </Link>
           </div>
         </div>
 
-        {/* Decorative Geometric Shapes */}
-        <div className="absolute left-[-20px] top-[-20px] w-32 h-32 rounded-full bg-[var(--dp-color-accent-warm)]/20 pointer-events-none -z-0" />
-        <div className="absolute left-16 bottom-[-30px] w-24 h-24 rotate-12 bg-[var(--dp-color-accent-fresh)]/25 pointer-events-none -z-0" />
+        {/* Quick Search Bar */}
+        <form onSubmit={handleSearchSubmit} className="relative flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="ابحث بالمنطقة أو المدينة (مثال: التجمع الخامس، زايد، المعادي...)"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-[var(--dp-color-ground)] text-[var(--dp-color-ink)] border-[2.5px] border-[var(--dp-color-outline)] rounded-xl py-2.5 pr-10 pl-4 text-xs sm:text-sm font-bold focus:outline-none focus:border-[var(--dp-color-accent)] transition-all"
+            />
+          </div>
+          <Button type="submit" variant="warm" size="sm" className="shrink-0 text-xs py-2.5">
+            بحث
+          </Button>
+        </form>
       </section>
 
-      {/* 3. Overview Statistics (4 Cards: عدد المفضلة، طلبات المعاينة، المواعيد المؤكدة، العقارات التي شاهدتها) */}
-      <section className="mb-8 text-right">
-        <h3 className="text-lg font-black text-[var(--dp-color-ink)] mb-4 flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-[var(--dp-color-accent)]" />
-          نظرة عامة على نشاطك
-        </h3>
-
-        {loading ? (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div
-                key={i}
-                className="p-5 rounded-[var(--dp-radius-corner)] border-[2.5px] border-[var(--dp-color-outline)] bg-[var(--dp-color-panel)] space-y-3"
-              >
-                <Skeleton className="w-10 h-10 rounded-xl" />
-                <Skeleton className="w-16 h-8" />
-                <Skeleton className="w-20 h-4" />
-              </div>
-            ))}
+      {/* ----------------------------------------------------
+          2. Compact Activity Stats (4 Cards)
+         ---------------------------------------------------- */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 text-right">
+        {/* 1. المفضلة */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('favorites')}
+          className={`p-3.5 sm:p-5 rounded-[var(--dp-radius-corner)] border-[2.5px] border-[var(--dp-color-outline)] text-right transition-all cursor-pointer ${
+            activeTab === 'favorites'
+              ? 'bg-[#fff0f4] shadow-hard -translate-y-0.5'
+              : 'bg-[var(--dp-color-panel)] hover:bg-[#fff7f9] shadow-hard-sm'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="p-2 rounded-xl bg-white border border-[var(--dp-color-outline)] text-rose-500 shadow-xs">
+              <Heart className="w-4 h-4 fill-rose-500" />
+            </span>
+            <span className="text-[11px] font-bold text-rose-700">محفوظة</span>
           </div>
-        ) : (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* 1. عدد المفضلة */}
-            <Link to="/buyer/favorites" className="block group">
-              <div className="p-5 rounded-[var(--dp-radius-corner)] border-[2.5px] border-[var(--dp-color-outline)] bg-[#fff5f8] shadow-hard-sm relative overflow-hidden transition-all group-hover:-translate-y-1">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="p-2.5 rounded-xl bg-white border border-[var(--dp-color-outline)] text-rose-500 shadow-xs">
-                    <Heart className="w-5 h-5 fill-rose-500" />
-                  </span>
-                  <span className="text-[11px] font-bold text-rose-800">محفوظة</span>
-                </div>
-                <div className="text-2xl sm:text-3xl font-black text-rose-950">
-                  {stats?.favoritesCount || 0}
-                </div>
-                <span className="text-xs font-black text-[#526078] mt-1 block">
-                  عدد المفضلة
-                </span>
-                <div className="absolute -bottom-3 -right-3 w-10 h-10 rounded-full bg-rose-200/40 pointer-events-none" />
-              </div>
-            </Link>
-
-            {/* 2. طلبات المعاينة */}
-            <Link to="/buyer/appointments" className="block group">
-              <div className="p-5 rounded-[var(--dp-radius-corner)] border-[2.5px] border-[var(--dp-color-outline)] bg-[#fffbf0] shadow-hard-sm relative overflow-hidden transition-all group-hover:-translate-y-1">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="p-2.5 rounded-xl bg-[var(--dp-color-accent-warm)] border border-[var(--dp-color-outline)] text-amber-950 shadow-xs">
-                    <CalendarCheck className="w-5 h-5 stroke-[2.5]" />
-                  </span>
-                  <span className="text-[11px] font-bold text-amber-800">ميدانية</span>
-                </div>
-                <div className="text-2xl sm:text-3xl font-black text-amber-950">
-                  {stats?.appointmentsCount || 0}
-                </div>
-                <span className="text-xs font-black text-[#526078] mt-1 block">
-                  طلبات المعاينة
-                </span>
-                <div className="absolute -bottom-3 -right-3 w-10 h-10 rounded-full bg-[var(--dp-color-accent-warm)]/30 pointer-events-none" />
-              </div>
-            </Link>
-
-            {/* 3. المواعيد المؤكدة */}
-            <Link to="/buyer/appointments" className="block group">
-              <div className="p-5 rounded-[var(--dp-radius-corner)] border-[2.5px] border-[var(--dp-color-outline)] bg-[#f3fcf7] shadow-hard-sm relative overflow-hidden transition-all group-hover:-translate-y-1">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="p-2.5 rounded-xl bg-[var(--dp-color-accent-fresh)] border border-[var(--dp-color-outline)] text-emerald-950 shadow-xs">
-                    <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
-                  </span>
-                  <span className="text-[11px] font-bold text-emerald-800">معتمدة</span>
-                </div>
-                <div className="text-2xl sm:text-3xl font-black text-emerald-950">
-                  {stats?.confirmedAppointmentsCount || 0}
-                </div>
-                <span className="text-xs font-black text-[#526078] mt-1 block">
-                  المواعيد المؤكدة
-                </span>
-                <div className="absolute -bottom-3 -right-3 w-10 h-10 rounded-full bg-[var(--dp-color-accent-fresh)]/30 pointer-events-none" />
-              </div>
-            </Link>
-
-            {/* 4. العقارات التي شاهدتها */}
-            <Link to="/buyer/recently-viewed" className="block group">
-              <div className="p-5 rounded-[var(--dp-radius-corner)] border-[2.5px] border-[var(--dp-color-outline)] bg-[var(--dp-color-selection)] shadow-hard-sm relative overflow-hidden transition-all group-hover:-translate-y-1">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="p-2.5 rounded-xl bg-white border border-[var(--dp-color-outline)] text-[var(--dp-color-accent)] shadow-xs">
-                    <History className="w-5 h-5 stroke-[2.5]" />
-                  </span>
-                  <span className="text-[11px] font-bold text-[var(--dp-color-accent)]">سجل</span>
-                </div>
-                <div className="text-2xl sm:text-3xl font-black text-[var(--dp-color-ink)]">
-                  {stats?.viewedCount || 0}
-                </div>
-                <span className="text-xs font-black text-[#526078] mt-1 block">
-                  العقارات التي شاهدتها
-                </span>
-                <div className="absolute -bottom-3 -right-3 w-10 h-10 rounded-full bg-purple-200/40 pointer-events-none" />
-              </div>
-            </Link>
+          <div className="text-xl sm:text-2xl font-black text-rose-950">
+            {favorites.length}
           </div>
-        )}
+          <span className="text-xs font-black text-[#526078] mt-0.5 block">
+            العقارات المفضلة
+          </span>
+        </button>
+
+        {/* 2. المعاينات */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('appointments')}
+          className={`p-3.5 sm:p-5 rounded-[var(--dp-radius-corner)] border-[2.5px] border-[var(--dp-color-outline)] text-right transition-all cursor-pointer ${
+            activeTab === 'appointments'
+              ? 'bg-[#fffdf0] shadow-hard -translate-y-0.5'
+              : 'bg-[var(--dp-color-panel)] hover:bg-[#fffdf5] shadow-hard-sm'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="p-2 rounded-xl bg-[var(--dp-color-accent-warm)] border border-[var(--dp-color-outline)] text-amber-950 shadow-xs">
+              <CalendarCheck className="w-4 h-4 stroke-[2.5]" />
+            </span>
+            <span className="text-[11px] font-bold text-amber-800">ميدانية</span>
+          </div>
+          <div className="text-xl sm:text-2xl font-black text-amber-950">
+            {appointments.length}
+          </div>
+          <span className="text-xs font-black text-[#526078] mt-0.5 block">
+            مواعيد المعاينة
+          </span>
+        </button>
+
+        {/* 3. استفساراتي */}
+        <Link
+          to="/buyer/inquiries"
+          className="p-3.5 sm:p-5 rounded-[var(--dp-radius-corner)] border-[2.5px] border-[var(--dp-color-outline)] bg-[var(--dp-color-panel)] hover:bg-[var(--dp-color-selection)] shadow-hard-sm hover:-translate-y-0.5 transition-all block text-right"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="p-2 rounded-xl bg-[var(--dp-color-accent-fresh)] border border-[var(--dp-color-outline)] text-emerald-950 shadow-xs">
+              <MessageSquare className="w-4 h-4 stroke-[2.5]" />
+            </span>
+            <span className="text-[11px] font-bold text-emerald-800">رسائل</span>
+          </div>
+          <div className="text-xl sm:text-2xl font-black text-emerald-950">
+            {inquiriesCount}
+          </div>
+          <span className="text-xs font-black text-[#526078] mt-0.5 block">
+            استفسارات الملاك
+          </span>
+        </Link>
+
+        {/* 4. شوهدت مؤخراً */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('viewed')}
+          className={`p-3.5 sm:p-5 rounded-[var(--dp-radius-corner)] border-[2.5px] border-[var(--dp-color-outline)] text-right transition-all cursor-pointer ${
+            activeTab === 'viewed'
+              ? 'bg-[#f4f2ff] shadow-hard -translate-y-0.5'
+              : 'bg-[var(--dp-color-panel)] hover:bg-[#fbfaff] shadow-hard-sm'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="p-2 rounded-xl bg-white border border-[var(--dp-color-outline)] text-[var(--dp-color-accent)] shadow-xs">
+              <History className="w-4 h-4 stroke-[2.5]" />
+            </span>
+            <span className="text-[11px] font-bold text-[var(--dp-color-accent)]">تصفح</span>
+          </div>
+          <div className="text-xl sm:text-2xl font-black text-[var(--dp-color-ink)]">
+            {recentlyViewed.length}
+          </div>
+          <span className="text-xs font-black text-[#526078] mt-0.5 block">
+            شوهدت مؤخراً
+          </span>
+        </button>
       </section>
 
-      {/* 4. Favorites & Next Appointment Split Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 text-right mb-10">
-        {/* Left Column (8 cols): My Saved Favorites */}
-        <div className="lg:col-span-8 space-y-4">
-          <div className="bg-[var(--dp-color-panel)] border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] p-6 shadow-hard space-y-6">
-            <div className="flex items-center justify-between pb-3 border-b-2 border-[#ece9db]">
-              <div>
-                <h3 className="text-lg font-black text-[var(--dp-color-ink)] flex items-center gap-2">
-                  <Heart className="w-5 h-5 text-rose-500 fill-rose-500" />
-                  عقاراتي المفضلة
-                </h3>
-                <p className="text-xs text-[#626d84] font-bold mt-0.5">
-                  العقارات التي قمت بتمييزها بنجمة للمقارنة وحجز المعاينات.
-                </p>
-              </div>
-              <Link
-                to="/buyer/favorites"
-                className="text-xs font-black text-[var(--dp-color-accent)] hover:underline flex items-center gap-1"
-              >
-                عرض كل المفضلة ({favorites.length})
-                <ArrowLeft className="w-3.5 h-3.5 stroke-[2.5]" />
-              </Link>
-            </div>
+      {/* ----------------------------------------------------
+          3. Clear, Intuitive Tab Navigation
+         ---------------------------------------------------- */}
+      <section className="bg-[var(--dp-color-panel)] border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] p-4 sm:p-6 shadow-hard text-right space-y-5">
+        {/* Tab Buttons */}
+        <div className="flex items-center gap-2 pb-3 border-b-2 border-[#ece9db] overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setActiveTab('favorites')}
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+              activeTab === 'favorites'
+                ? 'bg-[var(--dp-color-accent-fresh)] text-[var(--dp-color-ink)] border-[2px] border-[var(--dp-color-outline)] shadow-hard-sm'
+                : 'text-[#64748b] hover:bg-[var(--dp-color-ground)]'
+            }`}
+          >
+            <Heart className="w-4 h-4 text-rose-500 fill-rose-500" />
+            <span>عقاراتي المفضلة ({favorites.length})</span>
+          </button>
 
+          <button
+            type="button"
+            onClick={() => setActiveTab('appointments')}
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+              activeTab === 'appointments'
+                ? 'bg-[var(--dp-color-accent-warm)] text-[var(--dp-color-ink)] border-[2px] border-[var(--dp-color-outline)] shadow-hard-sm'
+                : 'text-[#64748b] hover:bg-[var(--dp-color-ground)]'
+            }`}
+          >
+            <CalendarCheck className="w-4 h-4 text-amber-700" />
+            <span>مواعيد المعاينة ({appointments.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('viewed')}
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+              activeTab === 'viewed'
+                ? 'bg-[var(--dp-color-selection)] text-[var(--dp-color-accent)] border-[2px] border-[var(--dp-color-outline)] shadow-hard-sm'
+                : 'text-[#64748b] hover:bg-[var(--dp-color-ground)]'
+            }`}
+          >
+            <History className="w-4 h-4 text-[var(--dp-color-accent)]" />
+            <span>شوهدت مؤخراً ({recentlyViewed.length})</span>
+          </button>
+        </div>
+
+        {/* Tab 1 Content: Favorites */}
+        {activeTab === 'favorites' && (
+          <div>
             {loading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Skeleton className="h-64 rounded-2xl" />
-                <Skeleton className="h-64 rounded-2xl" />
+                <Skeleton className="h-60 rounded-xl" />
+                <Skeleton className="h-60 rounded-xl" />
               </div>
             ) : favorites.length === 0 ? (
               <EmptyState
-                icon={<Heart className="w-8 h-8 text-rose-500" />}
-                title="مفضلتك فارغة حالياً"
-                description="استكشف آلاف العقارات الموثقة واضغط على علامة القلب في أي إعلان لحفظه هنا ومقارنته لاحقاً."
+                icon={<Heart className="w-10 h-10 text-rose-400" />}
+                title="لم تحفظ أي عقارات بعد"
+                description="استعرض العقارات واضغط على علامة القلب في أي عقار يعجبك لحفظه هنا للمقارنة لاحقاً."
                 actionLabel="تصفح العقارات الآن"
                 onAction={() => navigate('/properties')}
               />
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                {favorites.slice(0, 2).map((prop) => (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {favorites.map((prop) => (
                   <div key={prop.id} className="relative group">
                     <PropertyCard
                       property={prop}
@@ -368,54 +423,106 @@ export const BuyerDashboardPage: React.FC = () => {
               </div>
             )}
           </div>
+        )}
 
-          {/* 6. Recently Viewed Strip */}
-          <div className="bg-[var(--dp-color-panel)] border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] p-6 shadow-hard space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b-2 border-[#ece9db]">
-              <div>
-                <h3 className="text-base font-black text-[var(--dp-color-ink)] flex items-center gap-2">
-                  <History className="w-4.5 h-4.5 text-[var(--dp-color-accent)]" />
-                  شوهدت مؤخراً
-                </h3>
-                <p className="text-xs text-[#626d84] font-bold mt-0.5">
-                  العقارات التي تصفحتها خلال زياراتك الأخيرة.
-                </p>
-              </div>
-              <Link
-                to="/buyer/recently-viewed"
-                className="text-xs font-black text-[var(--dp-color-accent)] hover:underline flex items-center gap-1"
-              >
-                السجل بالكامل
-                <ArrowLeft className="w-3.5 h-3.5 stroke-[2.5]" />
-              </Link>
-            </div>
-
-            {recentlyViewed.length === 0 ? (
-              <div className="py-6 text-center text-xs text-[#8896ab] font-bold">
-                لم تشاهد أي عقارات بعد. تصفح المعروضات لتسجيلها في سجلك الشخصي.
-              </div>
+        {/* Tab 2 Content: Appointments */}
+        {activeTab === 'appointments' && (
+          <div>
+            {loading ? (
+              <Skeleton className="h-40 rounded-xl" />
+            ) : appointments.length === 0 ? (
+              <EmptyState
+                icon={<CalendarCheck className="w-10 h-10 text-amber-500" />}
+                title="لا توجد مواعيد معاينة مجدولة"
+                description="يمكنك حجز موعد معاينة ميدانية لأي عقار مع البائع مباشرة من صفحة تفاصيل العقار."
+                actionLabel="استكشف العقارات واحجز معاينة"
+                onAction={() => navigate('/properties')}
+              />
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {recentlyViewed.slice(0, 3).map((item) => (
+              <div className="space-y-3">
+                {appointments.map((appt) => (
+                  <div
+                    key={appt.id}
+                    className="p-4 rounded-xl border-[2px] border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-right shadow-hard-sm"
+                  >
+                    <div className="space-y-1.5 flex-1">
+                      <div className="flex items-center gap-2">
+                        <Badge variant={appt.status === 'confirmed' ? 'fresh' : 'warm'} size="sm">
+                          {appt.statusLabel}
+                        </Badge>
+                        <span className="text-xs font-bold text-gray-500">
+                          {appt.date} • {appt.time}
+                        </span>
+                      </div>
+                      <h4 className="text-sm sm:text-base font-black text-[var(--dp-color-ink)]">
+                        {appt.propertyTitle}
+                      </h4>
+                      <div className="flex items-center gap-3 text-xs text-[#526078] font-bold">
+                        <span className="flex items-center gap-1">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                          {appt.propertyLocation}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <User className="w-3.5 h-3.5 text-purple-600" />
+                          {appt.sellerName}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {appt.sellerPhone && (
+                        <a href={`tel:${appt.sellerPhone}`}>
+                          <Button variant="warm" size="sm" rightIcon={<Phone className="w-3.5 h-3.5" />}>
+                            اتصال ({appt.sellerPhone})
+                          </Button>
+                        </a>
+                      )}
+                      <Link to={`/properties/${appt.propertyId}`}>
+                        <Button variant="outline" size="sm">
+                          تفاصيل العقار
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 3 Content: Recently Viewed */}
+        {activeTab === 'viewed' && (
+          <div>
+            {recentlyViewed.length === 0 ? (
+              <EmptyState
+                icon={<History className="w-10 h-10 text-purple-400" />}
+                title="سجل التصفح فارغ"
+                description="العقارات التي تفتحها سيتم تسجيلها هنا لتتمكن من الرجوع إليها سريعاً."
+                actionLabel="تصفح المعروضات"
+                onAction={() => navigate('/properties')}
+              />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {recentlyViewed.map((item) => (
                   <Link
                     key={item.id}
                     to={`/properties/${item.id}`}
-                    className="p-3 rounded-xl border border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] hover:bg-[var(--dp-color-selection)] transition-all flex flex-col justify-between group"
+                    className="p-3 rounded-xl border-2 border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] hover:bg-[var(--dp-color-selection)] transition-all flex flex-col justify-between group shadow-hard-sm"
                   >
                     <div>
                       <img
                         src={item.imageUrl}
                         alt={item.title}
-                        className="w-full h-24 object-cover rounded-lg border border-[var(--dp-color-outline)] mb-2 group-hover:scale-102 transition-transform"
+                        className="w-full h-32 object-cover rounded-lg border border-[var(--dp-color-outline)] mb-2"
                       />
-                      <h4 className="font-black text-xs text-[var(--dp-color-ink)] line-clamp-1 mb-1">
+                      <h4 className="font-black text-xs sm:text-sm text-[var(--dp-color-ink)] line-clamp-1 mb-1">
                         {item.title}
                       </h4>
-                      <span className="text-[11px] text-[#626d84] block mb-1">
+                      <span className="text-[11px] text-[#626d84] font-bold block mb-1">
                         {item.location}، {item.city}
                       </span>
                     </div>
-                    <span className="text-xs font-black text-[var(--dp-color-accent)] block">
+                    <span className="text-xs sm:text-sm font-black text-[var(--dp-color-accent)] block pt-1">
                       {formatEGP(item.price)}
                     </span>
                   </Link>
@@ -423,112 +530,56 @@ export const BuyerDashboardPage: React.FC = () => {
               </div>
             )}
           </div>
+        )}
+      </section>
+
+      {/* ----------------------------------------------------
+          4. Quick Role Switcher & Account Utilities Bar
+         ---------------------------------------------------- */}
+      <section className="p-4 sm:p-5 rounded-[var(--dp-radius-corner)] border-[2.5px] border-[var(--dp-color-outline)] bg-[var(--dp-color-panel)] shadow-hard text-right space-y-3">
+        <div className="flex items-center justify-between pb-2 border-b border-[#ece9db]">
+          <span className="text-xs sm:text-sm font-black text-[var(--dp-color-ink)]">
+            تبديل الحساب السريع وتسجيل الخروج:
+          </span>
+          <Badge variant="fresh" size="sm">
+            حساب مشتري نشط
+          </Badge>
         </div>
 
-        {/* Right Column (4 cols): Upcoming Appointments & Direct Support */}
-        <div className="lg:col-span-4 space-y-4">
-          {/* Next Confirmed Appointment Banner */}
-          <div className="bg-[var(--dp-color-panel)] border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] p-6 shadow-hard space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b-2 border-[#ece9db]">
-              <h3 className="text-base font-black text-[var(--dp-color-ink)] flex items-center gap-2">
-                <CalendarCheck className="w-5 h-5 text-amber-600 stroke-[2.5]" />
-                أقرب موعد معاينة
-              </h3>
-              <Link to="/buyer/appointments" className="text-xs font-bold text-[var(--dp-color-accent)] hover:underline">
-                الجدول
-              </Link>
-            </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-[#64748b]">التبديل إلى:</span>
+            <button
+              type="button"
+              disabled={isSwitching}
+              onClick={() => handleRoleSwitch('seller')}
+              className="px-3 py-1.5 rounded-lg border-2 border-[var(--dp-color-outline)] bg-white hover:bg-[var(--dp-color-accent-warm)] text-xs font-black transition-all cursor-pointer shadow-hard-sm flex items-center gap-1.5"
+            >
+              <Building className="w-3.5 h-3.5 text-amber-600" />
+              <span>حساب البائع (محمد السيد)</span>
+            </button>
 
-            {upcomingConfirmed ? (
-              <div className="space-y-4">
-                <div className="p-4 rounded-xl border-[2px] border-[var(--dp-color-outline)] bg-[#fffdf0] space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Badge variant="fresh" size="sm">
-                      {upcomingConfirmed.statusLabel}
-                    </Badge>
-                    <span className="text-[11px] font-mono text-[#626d84]">
-                      {upcomingConfirmed.id}
-                    </span>
-                  </div>
-
-                  <h4 className="text-sm font-black text-[var(--dp-color-ink)] line-clamp-2">
-                    {upcomingConfirmed.propertyTitle}
-                  </h4>
-
-                  <div className="space-y-1.5 text-xs font-bold text-[#526078] pt-1 border-t border-amber-200/60">
-                    <div className="flex items-center gap-2 text-amber-950 font-black">
-                      <Clock className="w-4 h-4 text-amber-600" />
-                      <span>{upcomingConfirmed.date} • {upcomingConfirmed.time}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <MapPin className="w-4 h-4 text-emerald-600" />
-                      <span>{upcomingConfirmed.propertyLocation}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <User className="w-4 h-4 text-[var(--dp-color-accent)]" />
-                      <span>المالك: {upcomingConfirmed.sellerName}</span>
-                    </div>
-                  </div>
-
-                  {upcomingConfirmed.notes && (
-                    <p className="text-[11px] text-[#4b5563] bg-white p-2.5 rounded-lg border border-[var(--dp-color-outline)]">
-                      💡 {upcomingConfirmed.notes}
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <a
-                    href={`tel:${upcomingConfirmed.sellerPhone}`}
-                    className="flex-1"
-                  >
-                    <Button
-                      variant="warm"
-                      size="sm"
-                      className="w-full text-xs"
-                      rightIcon={<Phone className="w-3.5 h-3.5" />}
-                    >
-                      اتصال بالمالك ({upcomingConfirmed.sellerPhone})
-                    </Button>
-                  </a>
-                  <Link to={`/properties/${upcomingConfirmed.propertyId}`}>
-                    <Button variant="outline" size="sm" title="عرض تفاصيل الإعلان">
-                      <ExternalLink className="w-4 h-4" />
-                    </Button>
-                  </Link>
-                </div>
-              </div>
-            ) : (
-              <div className="p-6 text-center space-y-3 bg-[var(--dp-color-ground)] rounded-xl border border-[var(--dp-color-outline)]">
-                <CalendarCheck className="w-8 h-8 text-[#8896ab] mx-auto stroke-[1.8]" />
-                <p className="text-xs font-bold text-[#626d84] leading-relaxed">
-                  ليس لديك مواعيد معاينة مؤكدة حالياً. يمكنك حجز موعد زيارة لأي عقار مباشرة من صفحة تفاصيله.
-                </p>
-                <Link to="/properties">
-                  <Button variant="outline" size="sm" className="text-xs">
-                    استكشف العقارات
-                  </Button>
-                </Link>
-              </div>
-            )}
+            <button
+              type="button"
+              disabled={isSwitching}
+              onClick={() => handleRoleSwitch('admin')}
+              className="px-3 py-1.5 rounded-lg border-2 border-[var(--dp-color-outline)] bg-white hover:bg-[var(--dp-color-accent-secondary)] hover:text-white text-xs font-black transition-all cursor-pointer shadow-hard-sm flex items-center gap-1.5"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-purple-600" />
+              <span>مشرف النظام (م. أحمد مهران)</span>
+            </button>
           </div>
 
-          {/* Quick Support / Safe Inspection Tip */}
-          <div className="bg-[var(--dp-color-panel)] border-[3px] border-[var(--dp-color-outline)] rounded-[var(--dp-radius-corner)] p-5 shadow-hard space-y-2.5">
-            <div className="flex items-center gap-2 text-sm font-black text-emerald-950">
-              <span className="p-1 rounded-lg bg-[var(--dp-color-accent-fresh)] border border-[var(--dp-color-outline)]">
-                🛡️
-              </span>
-              <span>نصائح المعاينة الآمنة مع شقتي</span>
-            </div>
-            <ul className="text-xs text-[#4b5563] font-bold space-y-1.5 list-disc list-inside leading-relaxed">
-              <li>تأكد من شارة "موثق" لمراجعة مستندات الملكية ورخصة البناء.</li>
-              <li>راجع التشطيب والمرافق (الكهرباء والمياه والغاز) على الطبيعة.</li>
-              <li>فريق الدعم متاح لمرافقتك واستشارتك القانونية في أي وقت.</li>
-            </ul>
-          </div>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="px-3 py-1.5 rounded-lg border-2 border-rose-300 bg-white hover:bg-rose-50 text-rose-600 text-xs font-black transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>تسجيل الخروج</span>
+          </button>
         </div>
-      </div>
+      </section>
 
       {/* Confirmation Dialog: Remove from favorites */}
       <ConfirmDialog
@@ -536,7 +587,7 @@ export const BuyerDashboardPage: React.FC = () => {
         onClose={() => setRemoveFavId(null)}
         onConfirm={() => removeFavId && handleRemoveFavorite(removeFavId)}
         title="تأكيد إزالة العقار من المفضلة"
-        description="هل أنت متأكد من رغبتك في إزالة هذا العقار من قائمة مفضلتك؟ يمكنك إضافته مجدداً في أي وقت."
+        description="هل تريد إزالة هذا العقار من قائمة مفضلتك؟ يمكنك إضافته مجدداً في أي وقت."
         confirmLabel="إزالة من المفضلة"
         cancelLabel="إلغاء"
         variant="danger"

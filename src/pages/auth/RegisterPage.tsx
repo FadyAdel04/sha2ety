@@ -125,7 +125,7 @@ export const RegisterPage: React.FC = () => {
           </div>
         </Link>
 
-        <Link to="/login">
+        <Link to="/login" className="hidden sm:inline-block">
           <Button variant="outline" size="sm">
             لديك حساب؟ تسجيل الدخول
           </Button>

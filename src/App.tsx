@@ -43,6 +43,7 @@ import { AdminSettingsPage } from '@/pages/admin/AdminSettingsPage';
 
 // UI
 import { EmptyState } from '@/components/ui/EmptyState';
+import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
 
 export function App() {
   return (
@@ -256,6 +257,7 @@ export function App() {
             }
           />
         </Routes>
+        <MobileBottomNav />
       </BrowserRouter>
     </AuthProvider>
   );

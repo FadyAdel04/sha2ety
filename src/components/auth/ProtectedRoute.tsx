@@ -13,17 +13,19 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   children,
   allowedRoles,
 }) => {
-  const { user, isLoading, isAuthenticated, getRoleRedirectUrl, login, logout } = useAuth();
+  const { user, isLoading, isAuthenticated, getRoleRedirectUrl, switchUserRole, logout } = useAuth();
   const location = useLocation();
 
   const handleSwitchToAdmin = async () => {
-    await logout();
-    await login('admin@sha2ety.eg', 'Sha2ety@2026');
+    const res = await switchUserRole('admin');
+    if (!res.error) {
+      window.location.href = '/admin/dashboard';
+    }
   };
 
   const handleSwitchAccount = async () => {
     await logout();
-    window.location.href = `/login?redirect=${encodeURIComponent(location.pathname)}`;
+    window.location.href = '/login';
   };
 
   if (isLoading) {

@@ -37,6 +37,7 @@ export interface AuthContextType {
   forgotPassword: (email: string) => Promise<{ error?: string; success?: boolean }>;
   resetPassword: (newPassword: string) => Promise<{ error?: string; success?: boolean }>;
   getRoleRedirectUrl: (role?: UserRole | null) => string;
+  switchUserRole: (targetRole: UserRole) => Promise<{ error?: string; role: UserRole }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -97,23 +98,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const metadata = sbUser.user_metadata || {};
     const emailLower = sbUser.email?.toLowerCase().trim() || '';
 
-    // Ensure admin role for official admin email or metadata.role === 'admin'
-    const role: UserRole =
-      emailLower === 'admin@sha2ety.eg' || metadata.role === 'admin'
-        ? 'admin'
-        : metadata.role === 'seller'
-        ? 'seller'
-        : 'buyer';
+    // Check if it matches any pre-seeded demo user
+    const demoMatch = DEFAULT_DEMO_USERS.find(
+      (u) => u.email.toLowerCase() === emailLower
+    );
+
+    // Determine role with multi-tier detection:
+    // 1. Explicit admin check
+    // 2. Explicit seller check
+    // 3. User metadata role
+    // 4. Demo account match
+    // 5. Email heuristic (seller vs admin vs buyer)
+    let role: UserRole = 'buyer';
+    if (
+      emailLower === 'admin@sha2ety.eg' ||
+      metadata.role === 'admin' ||
+      demoMatch?.role === 'admin' ||
+      emailLower.includes('admin')
+    ) {
+      role = 'admin';
+    } else if (
+      emailLower === 'seller@sha2ety.eg' ||
+      metadata.role === 'seller' ||
+      demoMatch?.role === 'seller' ||
+      emailLower.includes('seller')
+    ) {
+      role = 'seller';
+    } else if (
+      emailLower === 'buyer@sha2ety.eg' ||
+      metadata.role === 'buyer' ||
+      demoMatch?.role === 'buyer'
+    ) {
+      role = 'buyer';
+    }
+
+    const defaultName = demoMatch
+      ? demoMatch.fullName
+      : role === 'admin'
+      ? 'م. أحمد مهران (مشرف النظام)'
+      : role === 'seller'
+      ? 'محمد السيد (بائع معتمد)'
+      : 'كريم عبد الله (مشتري)';
+
+    const defaultPhone = demoMatch?.phone || (role === 'admin' ? '01222334455' : '');
 
     return {
       id: sbUser.id,
       email: sbUser.email || '',
-      fullName:
-        metadata.full_name ||
-        (emailLower === 'admin@sha2ety.eg'
-          ? 'م. أحمد مهران (مشرف النظام)'
-          : sbUser.email?.split('@')[0] || 'مستخدم شقتي'),
-      phone: metadata.phone || (emailLower === 'admin@sha2ety.eg' ? '01222334455' : ''),
+      fullName: metadata.full_name || defaultName,
+      phone: metadata.phone || defaultPhone,
       role,
       emailVerified: Boolean(sbUser.email_confirmed_at),
       nationalId: metadata.national_id,
@@ -132,8 +165,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .eq('id', profile.id)
           .single();
         if (data) {
+          const dbRole = data.role as UserRole | undefined;
+          const validRole: UserRole | undefined =
+            dbRole && ['admin', 'seller', 'buyer'].includes(dbRole) ? dbRole : undefined;
+
           return {
             ...profile,
+            role: validRole || profile.role,
             fullName: data.full_name || profile.fullName,
             phone: data.phone || profile.phone,
             nationalId: data.national_id || profile.nationalId,
@@ -255,6 +293,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       (u) => u.email.toLowerCase() === cleanEmail
     );
 
+    // If currently signed in user does not match the logging in user, flush old session
+    if (user && user.email.toLowerCase() !== cleanEmail && isSupabaseConfigured()) {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.warn('Signout prior to new login skipped:', err);
+      }
+    }
+
     // 1. Try real Supabase auth if configured
     if (isSupabaseConfigured()) {
       try {
@@ -264,10 +311,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (!error && data.user) {
-          const profile = mapSupabaseUserToProfile(data.user);
+          let profile = mapSupabaseUserToProfile(data.user);
+          profile = await enrichProfileFromDb(profile);
+
+          // Force strict role alignment for known credentials
           if (cleanEmail === 'admin@sha2ety.eg') {
             profile.role = 'admin';
+          } else if (cleanEmail === 'seller@sha2ety.eg') {
+            profile.role = 'seller';
+          } else if (cleanEmail === 'buyer@sha2ety.eg') {
+            profile.role = 'buyer';
           }
+
+          if (demoMatch) {
+            profile = {
+              ...demoMatch,
+              ...profile,
+              role: profile.role || demoMatch.role,
+              fullName: profile.fullName || demoMatch.fullName,
+            };
+          }
+
           setUser(profile);
           if (rememberMe) {
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(profile));
@@ -276,7 +340,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return { role: profile.role };
         }
 
-        // If Supabase returned error, but this is a pre-seeded demo user (e.g. admin@sha2ety.eg)
+        // If Supabase returned error, but this is a pre-seeded demo user (e.g. admin, seller, buyer)
         if (demoMatch) {
           console.info('Logging in as pre-seeded default demo user:', demoMatch.email);
           setUser(demoMatch);
@@ -305,6 +369,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (matched) {
       if (cleanEmail === 'admin@sha2ety.eg') {
         matched.role = 'admin';
+      } else if (cleanEmail === 'seller@sha2ety.eg') {
+        matched.role = 'seller';
+      } else if (cleanEmail === 'buyer@sha2ety.eg') {
+        matched.role = 'buyer';
       }
       setUser(matched);
       if (rememberMe) {
@@ -335,6 +403,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setIsLoading(false);
     return { role: newProfile.role };
+  };
+
+  const switchUserRole = async (targetRole: UserRole): Promise<{ error?: string; role: UserRole }> => {
+    const roleEmailMap: Record<UserRole, string> = {
+      buyer: 'buyer@sha2ety.eg',
+      seller: 'seller@sha2ety.eg',
+      admin: 'admin@sha2ety.eg',
+    };
+    const targetEmail = roleEmailMap[targetRole];
+    const res = await login(targetEmail, 'Sha2ety@2026', true);
+    return { error: res.error, role: res.role || targetRole };
   };
 
   const register = async (data: RegisterData) => {
@@ -519,6 +598,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         forgotPassword,
         resetPassword,
         getRoleRedirectUrl,
+        switchUserRole,
       }}
     >
       {children}

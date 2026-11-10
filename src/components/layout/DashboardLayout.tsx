@@ -44,14 +44,32 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   actions,
   children,
 }) => {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, switchUserRole } = useAuth();
+  const [isSwitching, setIsSwitching] = useState(false);
 
   const handleLogout = async () => {
     await logout();
     navigate('/login', { replace: true });
+  };
+
+  const handleRoleSwitch = async (targetRole: Role) => {
+    if (role === targetRole) {
+      navigate(`/${targetRole}/dashboard`);
+      return;
+    }
+    setIsSwitching(true);
+    try {
+      const res = await switchUserRole(targetRole);
+      if (!res.error) {
+        navigate(`/${res.role}/dashboard`, { replace: true });
+      }
+    } catch (err) {
+      console.error('Role switch failed:', err);
+    } finally {
+      setIsSwitching(false);
+    }
   };
 
   const unreadNotifs = getUnreadNotificationsCount(role);
@@ -104,23 +122,13 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     <div className="min-h-screen bg-[var(--dp-color-ground)] text-[var(--dp-color-ink)] flex flex-col selection:bg-[var(--dp-color-selection)] selection:text-[var(--dp-color-accent)]">
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-30 bg-[var(--dp-color-panel)] border-b-[3px] border-[var(--dp-color-outline)] h-16 sm:h-20 flex items-center justify-between px-4 sm:px-6 shadow-sm">
-        <div className="flex items-center gap-3 sm:gap-4">
-          {/* Mobile Sidebar Toggle */}
-          <button
-            type="button"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="lg:hidden p-2 rounded-xl border-[2px] border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] text-[var(--dp-color-ink)] cursor-pointer shadow-hard-sm"
-            aria-label="القائمة الجانبية"
-          >
-            {sidebarOpen ? <X className="w-5 h-5 stroke-[2.5]" /> : <Menu className="w-5 h-5 stroke-[2.5]" />}
-          </button>
-
-          {/* Logo link */}
+        {/* Logo and Brand - Always visible */}
+        <div className="flex items-center justify-between w-full lg:w-auto gap-3 sm:gap-4">
           <Link to="/" className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-xl bg-[var(--dp-color-accent)] border-[2.5px] border-[var(--dp-color-outline)] flex items-center justify-center text-white font-black text-xl shadow-hard-sm">
               ش
             </div>
-            <div className="text-right hidden sm:block">
+            <div className="text-right">
               <span className="font-display font-black text-xl text-[var(--dp-color-ink)] block leading-none">
                 شقتي
               </span>
@@ -130,7 +138,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             </div>
           </Link>
 
-          <span className="text-gray-300 hidden sm:inline">|</span>
+          <span className="text-gray-300 hidden lg:inline">|</span>
 
           {/* Role badge */}
           <Badge variant={role === 'seller' ? 'warm' : role === 'admin' ? 'secondary' : 'fresh'} size="sm">
@@ -138,11 +146,11 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
           </Badge>
         </div>
 
-        {/* User profile & Notifications Controls */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        {/* Desktop Controls (hidden on mobile, handled by bottom nav) */}
+        <div className="hidden lg:flex items-center gap-2 sm:gap-3">
           <Link to="/">
             <Button variant="ghost" size="sm" rightIcon={<Home className="w-4 h-4" />}>
-              <span className="hidden sm:inline">الموقع الرئيسي</span>
+              <span>الموقع الرئيسي</span>
             </Button>
           </Link>
 
@@ -161,9 +169,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             )}
           </Link>
 
-          <div className="h-6 w-[2px] bg-[#ece9db] hidden sm:block" />
+          <div className="h-6 w-[2px] bg-[#ece9db]" />
 
-          {/* Seller Profile Pill Menu */}
+          {/* User Profile Pill Menu */}
           <Link
             to={role === 'seller' ? '/seller/profile' : role === 'buyer' ? '/buyer/profile' : '/admin/settings'}
             className="flex items-center gap-2 bg-[var(--dp-color-ground)] hover:bg-[var(--dp-color-selection)] border-[2px] border-[var(--dp-color-outline)] py-1.5 px-3 rounded-xl transition-all cursor-pointer shadow-hard-sm"
@@ -171,7 +179,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             <div className="w-7 h-7 rounded-lg bg-[var(--dp-color-accent)] text-white text-xs font-black flex items-center justify-center">
               {userInitial}
             </div>
-            <span className="text-xs font-black text-[var(--dp-color-ink)] hidden md:inline">
+            <span className="text-xs font-black text-[var(--dp-color-ink)]">
               {displayName}
             </span>
           </Link>
@@ -191,13 +199,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
       {/* Main Layout Body */}
       <div className="flex-1 flex overflow-hidden">
-        {/* RTL Sidebar for Desktop & Mobile Overlay */}
-        <aside
-          className={cn(
-            'fixed inset-y-0 right-0 z-40 w-72 bg-[var(--dp-color-panel)] border-l-[3px] border-[var(--dp-color-outline)] transform transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:block pt-16 lg:pt-0 shrink-0 overflow-y-auto',
-            sidebarOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'
-          )}
-        >
+        {/* Desktop Sidebar (Hidden on mobile, uses bottom nav) */}
+        <aside className="hidden lg:block w-72 bg-[var(--dp-color-panel)] border-l-[3px] border-[var(--dp-color-outline)] shrink-0 overflow-y-auto">
           <div className="p-5 flex flex-col justify-between h-full">
             <div>
               {/* Role Header Banner */}
@@ -216,7 +219,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
                     <Link
                       key={item.path}
                       to={item.path}
-                      onClick={() => setSidebarOpen(false)}
                       className={cn(
                         'flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-bold transition-all duration-[180ms]',
                         isActive
@@ -255,48 +257,49 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
                 تبديل الحساب التجريبي:
               </span>
               <div className="flex flex-col gap-1.5 text-xs font-bold">
-                <Link
-                  to="/seller/dashboard"
+                <button
+                  type="button"
+                  disabled={isSwitching}
+                  onClick={() => handleRoleSwitch('seller')}
                   className={cn(
-                    'p-2 rounded-lg border border-[var(--dp-color-outline)] transition-colors',
-                    role === 'seller' ? 'bg-[var(--dp-color-accent)] text-white' : 'bg-white hover:bg-gray-50'
+                    'p-2 rounded-lg border border-[var(--dp-color-outline)] transition-all cursor-pointer text-right flex items-center justify-between',
+                    role === 'seller' ? 'bg-[var(--dp-color-accent)] text-white shadow-sm' : 'bg-white hover:bg-gray-50 text-[var(--dp-color-ink)]'
                   )}
                 >
-                  لوحة البائع
-                </Link>
-                <Link
-                  to="/buyer/dashboard"
+                  <span>لوحة البائع</span>
+                  {role === 'seller' && <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded">الحالي</span>}
+                </button>
+                <button
+                  type="button"
+                  disabled={isSwitching}
+                  onClick={() => handleRoleSwitch('buyer')}
                   className={cn(
-                    'p-2 rounded-lg border border-[var(--dp-color-outline)] transition-colors',
-                    role === 'buyer' ? 'bg-[var(--dp-color-accent)] text-white' : 'bg-white hover:bg-gray-50'
+                    'p-2 rounded-lg border border-[var(--dp-color-outline)] transition-all cursor-pointer text-right flex items-center justify-between',
+                    role === 'buyer' ? 'bg-[var(--dp-color-accent)] text-white shadow-sm' : 'bg-white hover:bg-gray-50 text-[var(--dp-color-ink)]'
                   )}
                 >
-                  لوحة المشتري
-                </Link>
-                <Link
-                  to="/admin/dashboard"
+                  <span>لوحة المشتري</span>
+                  {role === 'buyer' && <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded">الحالي</span>}
+                </button>
+                <button
+                  type="button"
+                  disabled={isSwitching}
+                  onClick={() => handleRoleSwitch('admin')}
                   className={cn(
-                    'p-2 rounded-lg border border-[var(--dp-color-outline)] transition-colors',
-                    role === 'admin' ? 'bg-[var(--dp-color-accent)] text-white' : 'bg-white hover:bg-gray-50'
+                    'p-2 rounded-lg border border-[var(--dp-color-outline)] transition-all cursor-pointer text-right flex items-center justify-between',
+                    role === 'admin' ? 'bg-[var(--dp-color-accent)] text-white shadow-sm' : 'bg-white hover:bg-gray-50 text-[var(--dp-color-ink)]'
                   )}
                 >
-                  لوحة الإدارة
-                </Link>
+                  <span>لوحة الإدارة</span>
+                  {role === 'admin' && <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded">الحالي</span>}
+                </button>
               </div>
             </div>
           </div>
         </aside>
 
-        {/* Mobile backdrop */}
-        {sidebarOpen && (
-          <div
-            className="fixed inset-0 bg-black/40 z-30 lg:hidden"
-            onClick={() => setSidebarOpen(false)}
-          />
-        )}
-
         {/* Content Area */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+        <main className="flex-1 p-3 sm:p-6 lg:p-8 pb-28 lg:pb-8 overflow-y-auto">
           <div className="max-w-6xl mx-auto space-y-6">
             {/* Header Section */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b-2 border-[#ece9db] text-right">

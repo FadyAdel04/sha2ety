@@ -200,7 +200,7 @@ export const Footer: React.FC<FooterProps> = ({ hideSellerCta = false }) => {
         </div>
 
         {/* Bottom Bar */}
-        <div className="max-w-7xl mx-auto mt-12 pt-6 border-t border-[#334155] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#94a3b8]">
+        <div className="max-w-7xl mx-auto mt-12 pt-6 pb-20 lg:pb-0 border-t border-[#334155] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#94a3b8]">
           <p>© {new Date().getFullYear()} منصة شقتي (Sha2ety). جميع الحقوق محفوظة لجمهورية مصر العربية.</p>
           <div className="flex items-center gap-3">
             <span>العملة: الجنيه المصري (ج.م)</span>
