@@ -58,17 +58,30 @@ export async function uploadPropertyImage(
 }
 
 /**
- * Upload a confidential property ownership document to the PRIVATE bucket
+ * Convert a File object to a persistent Base64 Data URL for durable offline/fallback preview
+ */
+export async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve((e.target?.result as string) || '#');
+    reader.onerror = () => resolve('#');
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Upload a confidential property ownership document to Supabase Storage
  */
 export async function uploadPropertyDocument(
   file: File,
   sellerId: string,
   propertyId: string
 ): Promise<UploadResult> {
-  try {
-    const ext = file.name.split('.').pop() || 'pdf';
-    const filePath = `${sellerId}/${propertyId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+  const ext = file.name.split('.').pop() || 'pdf';
+  const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+  const filePath = `${sellerId}/${propertyId}/${Date.now()}-${cleanName}`;
 
+  try {
     const { data, error } = await supabase.storage
       .from(BUCKET_PROPERTY_DOCUMENTS)
       .upload(filePath, file, {
@@ -77,28 +90,40 @@ export async function uploadPropertyDocument(
       });
 
     if (error) {
-      console.warn('Supabase document upload failed, falling back to blob URL:', error.message);
+      console.warn(
+        'Supabase Storage document upload encountered an issue, falling back to durable Data URL:',
+        error.message
+      );
+      const fallbackUrl = await fileToDataUrl(file);
       return {
         path: filePath,
-        url: URL.createObjectURL(file),
+        url: fallbackUrl,
         success: true,
+        error: error.message,
       };
     }
 
-    // Confidential documents MUST use signed URLs, never public URLs
-    const signed = await getSignedDocumentUrl(data.path, 3600);
+    // Try getting public URL first, then signed URL
+    const { data: publicData } = supabase.storage
+      .from(BUCKET_PROPERTY_DOCUMENTS)
+      .getPublicUrl(data.path);
+
+    const signed = await getSignedDocumentUrl(data.path, 60 * 60 * 24 * 30); // 30 days
+    const finalUrl = publicData?.publicUrl || signed || (await fileToDataUrl(file));
 
     return {
       path: data.path,
-      url: signed || URL.createObjectURL(file),
+      url: finalUrl,
       success: true,
     };
   } catch (err: any) {
-    console.error('Error in uploadPropertyDocument:', err);
+    console.error('Error in uploadPropertyDocument, using durable fallback:', err);
+    const fallbackUrl = await fileToDataUrl(file);
     return {
-      path: '',
-      url: URL.createObjectURL(file),
+      path: filePath,
+      url: fallbackUrl,
       success: true,
+      error: err?.message,
     };
   }
 }

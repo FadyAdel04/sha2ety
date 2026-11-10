@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/Select';
 import {
   getAdminProperties,
   AdminProperty,
+  getSampleDocUrl,
 } from '@/services/adminService';
 import {
   sbFetchAllProperties,
@@ -80,7 +81,7 @@ export const AdminPropertiesPage: React.FC = () => {
                 id: `doc-${p.id}-1`,
                 name: 'عقد الملكية الموثق أو سند الملكية.pdf',
                 type: 'deed',
-                url: '#',
+                url: getSampleDocUrl('deed'),
                 size: '2.5 MB',
                 uploadDate: (p.created_at || '').slice(0, 10) || '2026-11-04',
                 status: 'pending',

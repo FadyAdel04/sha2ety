@@ -15,6 +15,7 @@ import {
   PropertyLegalDocument,
   SellerPropertyStatus,
 } from '@/services/sellerService';
+import { uploadPropertyDocument } from '@/services/storageService';
 import {
   EGYPT_GOVERNORATES,
   TOP_NATIONAL_HOTSPOTS,
@@ -452,6 +453,8 @@ export const SellerNewPropertyPage: React.FC = () => {
 
   // Document Preview Modal State
   const [previewDoc, setPreviewDoc] = useState<PropertyLegalDocument | null>(null);
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+  const [uploadDocToast, setUploadDocToast] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1069,25 +1072,31 @@ export const SellerNewPropertyPage: React.FC = () => {
     });
   };
 
-  // Document upload handling with real file reader (Data URL for visual preview)
-  const handleDocumentFiles = (
+  // Document upload handling: uploads to Supabase Storage and records document metadata
+  const handleDocumentFiles = async (
     files: FileList | null,
     docType: PropertyLegalDocument['type'],
     typeName: string
   ) => {
     if (!files || files.length === 0) return;
+    setIsUploadingDoc(true);
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const dataUrl = (e.target?.result as string) || '#';
+    try {
+      const sellerId = user?.id || 'demo-seller-1';
+      const tempPropId = `prop-${Date.now()}`;
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+
+        // Upload to Supabase Storage
+        const uploadResult = await uploadPropertyDocument(file, sellerId, tempPropId);
+
         const newDoc: PropertyLegalDocument = {
           id: `doc-${Date.now()}-${i}`,
           name: file.name,
           type: docType,
           typeName,
-          url: dataUrl,
+          url: uploadResult.url,
           size: `${(file.size / (1024 * 1024)).toFixed(1)} ميجابايت`,
           status: 'pending',
           uploadedAt: new Date().toISOString(),
@@ -1097,8 +1106,14 @@ export const SellerNewPropertyPage: React.FC = () => {
           ...prev,
           documents: [...prev.documents, newDoc],
         }));
-      };
-      reader.readAsDataURL(file);
+
+        setUploadDocToast(`تم حفظ وتخزين مستند "${file.name}" في Supabase بنجاح.`);
+      }
+    } catch (err: any) {
+      console.error('Error uploading document to Supabase:', err);
+    } finally {
+      setIsUploadingDoc(false);
+      setTimeout(() => setUploadDocToast(null), 4000);
     }
   };
 
@@ -3451,6 +3466,20 @@ export const SellerNewPropertyPage: React.FC = () => {
                 </div>
               )}
 
+              {isUploadingDoc && (
+                <div className="p-3.5 bg-blue-50 border-2 border-blue-300 rounded-xl text-blue-900 text-xs font-black flex items-center gap-2 animate-pulse">
+                  <UploadCloud className="w-4 h-4 text-blue-600 animate-bounce" />
+                  <span>جاري رفع وتخزين المستندات في Supabase Storage السحابي بأمان...</span>
+                </div>
+              )}
+
+              {uploadDocToast && (
+                <div className="p-3.5 bg-emerald-50 border-2 border-emerald-300 rounded-xl text-emerald-900 text-xs font-black flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{uploadDocToast}</span>
+                </div>
+              )}
+
               {/* Categorized Document Upload Slots */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* 1. عقد الملكية (إلزامي للجميع) */}
@@ -3592,7 +3621,7 @@ export const SellerNewPropertyPage: React.FC = () => {
                             <span className="font-black text-xs text-[var(--dp-color-ink)] block truncate">
                               {doc.name}
                             </span>
-                            <div className="flex items-center gap-2 text-[11px] text-[#626d84] mt-0.5">
+                            <div className="flex items-center gap-2 text-[11px] text-[#626d84] mt-0.5 flex-wrap">
                               <Badge variant="fresh" size="sm">
                                 {doc.typeName}
                               </Badge>
@@ -3600,6 +3629,9 @@ export const SellerNewPropertyPage: React.FC = () => {
                               <Badge variant="warm" size="sm">
                                 بانتظار فحص الإدمن
                               </Badge>
+                              <span className="text-[10px] bg-sky-50 text-sky-800 border border-sky-300 px-2 py-0.5 rounded font-bold">
+                                Supabase ☁️
+                              </span>
                             </div>
                           </div>
                         </div>

@@ -44,11 +44,13 @@ import { AdminSettingsPage } from '@/pages/admin/AdminSettingsPage';
 // UI
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
+import { ScrollToTop } from '@/components/layout/ScrollToTop';
 
 export function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <ScrollToTop />
         <Routes>
           {/* Public Routes */}
           <Route path="/" element={<HomePage />} />

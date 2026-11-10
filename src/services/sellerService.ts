@@ -8,6 +8,7 @@ import {
 import { getStoredAppointments } from '@/services/appointmentService';
 import { addNotification } from '@/services/communicationService';
 import { sbCreateNotification } from '@/services/supabaseService';
+import { uploadPropertyDocument } from '@/services/storageService';
 
 export type SellerPropertyStatus =
   | 'draft'
@@ -159,6 +160,39 @@ export async function getSellerProperties(sellerId?: string): Promise<SellerProp
         .order('created_at', { ascending: false });
 
       if (!error && data && data.length > 0) {
+        // Fetch real uploaded documents from property_documents table in Supabase
+        const propIds = data.map((d) => d.id);
+        const { data: docsData } = await supabase
+          .from('property_documents')
+          .select('*')
+          .in('property_id', propIds);
+
+        const docsMap = new Map<string, PropertyLegalDocument[]>();
+        if (docsData) {
+          docsData.forEach((row: any) => {
+            const list = docsMap.get(row.property_id) || [];
+            list.push({
+              id: row.id,
+              name: row.document_name || `مستند ${row.document_type || 'رسمي'}.pdf`,
+              type: row.document_type || 'deed',
+              typeName:
+                row.document_type === 'deed'
+                  ? 'عقد ملكية مسجل'
+                  : row.document_type === 'building_permit'
+                  ? 'رخصة بناء ومطابقة'
+                  : row.document_type === 'national_id'
+                  ? 'بطاقة الرقم القومي'
+                  : row.document_type === 'power_of_attorney'
+                  ? 'توكيل رسمي بالشهر العقاري'
+                  : 'مستند إثبات ملكية',
+              url: row.document_url,
+              uploadedAt: row.created_at || new Date().toISOString(),
+              status: row.status || 'pending',
+            });
+            docsMap.set(row.property_id, list);
+          });
+        }
+
         return data.map((item) => ({
           id: item.id,
           sellerId: item.seller_id,
@@ -177,6 +211,7 @@ export async function getSellerProperties(sellerId?: string): Promise<SellerProp
           viewsCount: item.views_count || 0,
           createdAt: item.created_at,
           adminFeedback: item.admin_notes,
+          documents: docsMap.get(item.id) || [],
         }));
       }
     }
@@ -302,8 +337,98 @@ export async function deletePropertyDraft(id: string): Promise<boolean> {
   return true;
 }
 
-// Seller action: Resubmit corrected property
-export async function resubmitProperty(id: string, correctedNotes?: string): Promise<boolean> {
+// Seller action: Upload new document for an existing property to confirm ownership
+export async function uploadPropertyDocumentForSeller(
+  propertyId: string,
+  sellerId: string,
+  file: File,
+  docType: PropertyLegalDocument['type'],
+  typeName: string
+): Promise<PropertyLegalDocument> {
+  const uploadRes = await uploadPropertyDocument(file, sellerId, propertyId);
+
+  const newDoc: PropertyLegalDocument = {
+    id: `doc-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+    name: file.name,
+    type: docType,
+    typeName,
+    url: uploadRes.url,
+    size: `${(file.size / (1024 * 1024)).toFixed(1)} ميجابايت`,
+    status: 'pending',
+    uploadedAt: new Date().toISOString(),
+  };
+
+  // 1. Insert into Supabase property_documents table
+  try {
+    const isUUID = (str?: string) =>
+      Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+
+    if (isUUID(propertyId) && isUUID(sellerId)) {
+      const { data, error } = await supabase
+        .from('property_documents')
+        .insert({
+          property_id: propertyId,
+          seller_id: sellerId,
+          document_type: docType,
+          document_url: uploadRes.url,
+          status: 'pending',
+        })
+        .select()
+        .single();
+
+      if (!error && data?.id) {
+        newDoc.id = data.id;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to insert into Supabase property_documents table:', err);
+  }
+
+  // 2. Update local seller store
+  const stored = getStoredSellerProperties();
+  const propIndex = stored.findIndex((p) => p.id === propertyId);
+  if (propIndex !== -1) {
+    const prop = stored[propIndex];
+    prop.documents = [...(prop.documents || []), newDoc];
+    prop.status = 'pending_review';
+    stored[propIndex] = prop;
+    saveStoredSellerProperties(stored);
+  }
+
+  // 3. Update master catalog & notify
+  try {
+    const master = getStoredPropertiesMaster();
+    const mIndex = master.findIndex((p) => p.id === propertyId);
+    if (mIndex !== -1) {
+      master[mIndex].status = 'pending_review';
+      saveMasterProperty(master[mIndex]);
+    }
+  } catch {}
+
+  // 4. Notify admin of document submission for confirmation
+  try {
+    const adminNotifsKey = 'sha2ety_admin_notifications';
+    const notifs = JSON.parse(localStorage.getItem(adminNotifsKey) || '[]');
+    notifs.unshift({
+      id: `notif-${Date.now()}`,
+      title: 'مستند ملكية جديد لتأكيد العقار',
+      message: `قام البائع برفع مستند "${newDoc.name}" (${newDoc.typeName}) لتأكيد ملكية العقار.`,
+      propertyId,
+      createdAt: new Date().toISOString(),
+      read: false,
+    });
+    localStorage.setItem(adminNotifsKey, JSON.stringify(notifs));
+  } catch {}
+
+  return newDoc;
+}
+
+// Seller action: Resubmit corrected property with optional new documents
+export async function resubmitProperty(
+  id: string,
+  correctedNotes?: string,
+  newDocuments?: PropertyLegalDocument[]
+): Promise<boolean> {
   const list = getStoredSellerProperties();
   const updated = list.map((p) =>
     p.id === id
@@ -311,6 +436,10 @@ export async function resubmitProperty(id: string, correctedNotes?: string): Pro
           ...p,
           status: 'pending_review' as SellerPropertyStatus,
           adminFeedback: undefined,
+          documents:
+            newDocuments && newDocuments.length > 0
+              ? [...(p.documents || []), ...newDocuments]
+              : p.documents,
           description: correctedNotes ? `${p.description}\n\n[تم التعديل]: ${correctedNotes}` : p.description,
         }
       : p

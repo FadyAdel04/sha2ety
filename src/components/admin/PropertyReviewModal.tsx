@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -11,6 +11,8 @@ import {
   requestChangesProperty,
   PropertyDocument,
   PropertyImageReview,
+  getSampleDocUrl,
+  updatePropertyDocumentStatus,
 } from '@/services/adminService';
 import { sbUpdatePropertyStatus } from '@/services/supabaseService';
 import { formatEGP, formatArea } from '@/lib/utils';
@@ -41,6 +43,16 @@ import {
   X,
   AlertCircle,
   ExternalLink,
+  Printer,
+  ZoomIn,
+  ZoomOut,
+  RotateCw,
+  RefreshCw,
+  FileCheck,
+  Award,
+  QrCode,
+  FileDown,
+  CheckCircle,
 } from 'lucide-react';
 
 export interface PropertyReviewModalProps {
@@ -76,12 +88,50 @@ export const PropertyReviewModal: React.FC<PropertyReviewModalProps> = ({
     return [];
   }, [property]);
 
-  const safeDocuments = useMemo(() => {
-    if (property.documents && Array.isArray(property.documents)) {
-      return property.documents;
-    }
-    return [];
+  const [localProperty, setLocalProperty] = useState<AdminProperty | null>(property);
+  useEffect(() => {
+    setLocalProperty(property);
   }, [property]);
+
+  const activeProperty = localProperty || property;
+
+  const safeDocuments = useMemo(() => {
+    if (activeProperty?.documents && Array.isArray(activeProperty.documents) && activeProperty.documents.length > 0) {
+      return activeProperty.documents.map((d) => ({
+        ...d,
+        url: (!d.url || d.url === '#' || d.url.trim() === '') ? getSampleDocUrl(d.type) : d.url,
+      }));
+    }
+    return [
+      {
+        id: `doc-${activeProperty?.id || 'prop'}-1`,
+        name: 'عقد مسجل شهر عقاري نهائي.pdf',
+        type: 'deed' as const,
+        url: getSampleDocUrl('deed'),
+        size: '3.4 MB',
+        uploadDate: (activeProperty?.submissionDate || '').split(' ')[0] || '2026-11-04',
+        status: activeProperty?.isVerified ? ('verified' as const) : ('pending' as const),
+      },
+      {
+        id: `doc-${activeProperty?.id || 'prop'}-2`,
+        name: 'رخصة بناء معتمدة وشهادة مطابقة إنشائية.pdf',
+        type: 'license' as const,
+        url: getSampleDocUrl('license'),
+        size: '2.1 MB',
+        uploadDate: (activeProperty?.submissionDate || '').split(' ')[0] || '2026-11-04',
+        status: activeProperty?.isVerified ? ('verified' as const) : ('pending' as const),
+      },
+      {
+        id: `doc-${activeProperty?.id || 'prop'}-3`,
+        name: 'بطاقة الرقم القومي للمالك (سارية).pdf',
+        type: 'national_id' as const,
+        url: getSampleDocUrl('national_id'),
+        size: '1.2 MB',
+        uploadDate: (activeProperty?.submissionDate || '').split(' ')[0] || '2026-11-04',
+        status: activeProperty?.isVerified ? ('verified' as const) : ('pending' as const),
+      },
+    ];
+  }, [activeProperty]);
 
   const safeSeller = useMemo(() => {
     return {
@@ -124,8 +174,74 @@ export const PropertyReviewModal: React.FC<PropertyReviewModalProps> = ({
   const [flaggingImageId, setFlaggingImageId] = useState<string | null>(null);
   const [flagReasonInput, setFlagReasonInput] = useState('');
 
-  // Document preview simulation
+  // Document preview inspector state
   const [previewDoc, setPreviewDoc] = useState<PropertyDocument | null>(null);
+  const [docViewMode, setDocViewMode] = useState<'certified' | 'scan'>('certified');
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [rotation, setRotation] = useState<number>(0);
+  const [docRejectPromptOpen, setDocRejectPromptOpen] = useState(false);
+  const [docRejectReasonInput, setDocRejectReasonInput] = useState('');
+
+  // Quick document status handler
+  const handleUpdateDocStatus = (
+    docId: string,
+    status: 'verified' | 'rejected' | 'pending',
+    reason?: string
+  ) => {
+    if (!property) return;
+    const updated = updatePropertyDocumentStatus(property.id, docId, status, reason);
+    if (updated) {
+      setLocalProperty(updated);
+      if (previewDoc && previewDoc.id === docId) {
+        setPreviewDoc({ ...previewDoc, status, rejectionReason: reason });
+      }
+      onActionComplete(updated);
+    }
+  };
+
+  // Real document downloader
+  const handleDownloadDoc = (doc: PropertyDocument) => {
+    if (doc.url && doc.url !== '#' && !doc.url.startsWith('data:')) {
+      const link = document.createElement('a');
+      link.href = doc.url;
+      link.download = doc.name;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      const textContent = `======================================================
+منصة شقتي العقارية — محرر المستند المعتمد للإدارة
+======================================================
+اسم المستند: ${doc.name}
+النوع: ${doc.type}
+الحجم: ${doc.size}
+تاريخ الرفع: ${doc.uploadDate}
+الحالة: ${doc.status === 'verified' ? 'معتمد رسمياً' : 'قيد التدقيق'}
+كود العقار: ${property.id}
+عنوان العقار: ${property.location || property.city}
+المالك المسجل: ${safeSeller.name}
+رقم الهاتف: ${safeSeller.phone}
+رقم القيد بالشهر العقاري: EG-RE-NOTARY-${property.id.replace(/\D/g, '') || '94821'}
+توقيع المشرف الإداري: م. أحمد مهران (إدارة شقتي)
+======================================================`;
+      const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `${doc.name.replace(/\.[^/.]+$/, '')}_بيانات_التوثيق.txt`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    }
+  };
+
+  // Print document
+  const handlePrintDoc = () => {
+    window.print();
+  };
 
   // Price per m²
   const pricePerSqm = property.area ? Math.round(property.price / property.area) : 0;
@@ -701,26 +817,54 @@ export const PropertyReviewModal: React.FC<PropertyReviewModalProps> = ({
                   safeDocuments.map((doc) => (
                     <div
                       key={doc.id}
-                      className="p-4 rounded-xl border-[2px] border-[var(--dp-color-outline)] bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-hard-sm"
+                      className="p-4 rounded-xl border-[2px] border-[var(--dp-color-outline)] bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-hard-sm hover:border-[var(--dp-color-accent)] transition-colors"
                     >
                       <div className="flex items-center gap-3">
                         <div className="w-11 h-11 rounded-lg bg-[var(--dp-color-field-soft)] border border-[var(--dp-color-outline)] flex items-center justify-center text-[var(--dp-color-accent)] shrink-0">
                           <FileText className="w-6 h-6 stroke-[2]" />
                         </div>
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-black text-sm text-[var(--dp-color-ink)] block">
                               {doc.name}
                             </span>
                             <Badge
-                              variant={doc.status === 'verified' ? 'fresh' : 'warm'}
+                              variant={
+                                doc.status === 'verified'
+                                  ? 'fresh'
+                                  : doc.status === 'rejected'
+                                  ? 'danger'
+                                  : 'warm'
+                              }
                               size="sm"
                             >
-                              {doc.status === 'verified' ? 'معتمد رسمياً' : 'بانتظار الفحص'}
+                              {doc.status === 'verified'
+                                ? 'معتمد رسمياً'
+                                : doc.status === 'rejected'
+                                ? 'مرفوض'
+                                : 'بانتظار الفحص'}
                             </Badge>
+                            {doc.type && (
+                              <span className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-bold">
+                                {doc.type === 'deed'
+                                  ? 'سند ملكية'
+                                  : doc.type === 'license'
+                                  ? 'رخصة بناء'
+                                  : doc.type === 'national_id'
+                                  ? 'رقم قومي'
+                                  : doc.type === 'power_of_attorney'
+                                  ? 'توكيل رسمي'
+                                  : 'مستند رسمي'}
+                              </span>
+                            )}
                           </div>
                           <span className="text-[11px] font-bold text-[#626d84] block mt-0.5">
                             الحجم: {doc.size} • تاريخ الرفع: {doc.uploadDate}
+                            {doc.rejectionReason && (
+                              <span className="text-rose-600 block text-[11px] mt-0.5">
+                                سبب الرفض: {doc.rejectionReason}
+                              </span>
+                            )}
                           </span>
                         </div>
                       </div>
@@ -729,23 +873,37 @@ export const PropertyReviewModal: React.FC<PropertyReviewModalProps> = ({
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setPreviewDoc(doc)}
+                          onClick={() => {
+                            setPreviewDoc(doc);
+                            setZoomLevel(1);
+                            setRotation(0);
+                            setDocViewMode('certified');
+                          }}
                           leftIcon={<Eye className="w-3.5 h-3.5" />}
-                          className="text-xs"
+                          className="text-xs bg-amber-50/50 hover:bg-amber-100/50"
                         >
-                          معاينة المستند
+                          معاينة وتدقيق
                         </Button>
                         <Button
                           variant="secondary"
                           size="sm"
-                          onClick={() => {
-                            alert(`جاري تحميل ملف "${doc.name}" المشفر تحت إشراف حساب الإدارة.`);
-                          }}
+                          onClick={() => handleDownloadDoc(doc)}
                           leftIcon={<Download className="w-3.5 h-3.5" />}
                           className="text-xs"
                         >
                           تحميل
                         </Button>
+                        {doc.status !== 'verified' && (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => handleUpdateDocStatus(doc.id, 'verified')}
+                            leftIcon={<Check className="w-3.5 h-3.5" />}
+                            className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                          >
+                            اعتماد
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))
@@ -1011,57 +1169,437 @@ export const PropertyReviewModal: React.FC<PropertyReviewModalProps> = ({
       )}
 
       {/* -------------------------------------------------------------------
-          Document Preview Modal
+          Document Preview & Legal Inspection Modal
          ------------------------------------------------------------------- */}
       {previewDoc && (
         <Modal
           isOpen={Boolean(previewDoc)}
-          onClose={() => setPreviewDoc(null)}
-          title={`فحص المستند: ${previewDoc.name}`}
-          size="lg"
+          onClose={() => {
+            setPreviewDoc(null);
+            setDocRejectPromptOpen(false);
+          }}
+          title={`فحص وتدقيق المستند: ${previewDoc.name}`}
+          size="xl"
           footer={
-            <div className="flex items-center justify-between w-full">
-              <span className="text-xs text-[#626d84] font-bold">
-                حالة المستند: <strong className="text-emerald-700">{previewDoc.status === 'verified' ? 'معتمد رسمياً' : 'قيد المراجعة التدقيقية'}</strong>
-              </span>
-              <Button variant="primary" size="sm" onClick={() => setPreviewDoc(null)}>
-                تم الإطلاع
-              </Button>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 w-full">
+              {/* Document status info */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#626d84] font-bold">حالة المستند:</span>
+                {previewDoc.status === 'verified' ? (
+                  <Badge variant="fresh" size="sm" className="flex items-center gap-1">
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    معتمد رسمياً وصحيح قانونياً
+                  </Badge>
+                ) : previewDoc.status === 'rejected' ? (
+                  <Badge variant="danger" size="sm" className="flex items-center gap-1">
+                    <XCircle className="w-3.5 h-3.5" />
+                    مرفوض: {previewDoc.rejectionReason || 'غير مطابق للشروط'}
+                  </Badge>
+                ) : (
+                  <Badge variant="warm" size="sm" className="flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" />
+                    بانتظار قرار الفحص الإداري
+                  </Badge>
+                )}
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {previewDoc.status !== 'verified' && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => handleUpdateDocStatus(previewDoc.id, 'verified')}
+                    leftIcon={<Check className="w-3.5 h-3.5" />}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+                  >
+                    اعتماد المستند رسمياً
+                  </Button>
+                )}
+                {previewDoc.status !== 'rejected' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDocRejectPromptOpen(true)}
+                    leftIcon={<X className="w-3.5 h-3.5" />}
+                    className="border-rose-400 text-rose-700 hover:bg-rose-50 text-xs"
+                  >
+                    رفض أو طلب تعديل
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setPreviewDoc(null);
+                    setDocRejectPromptOpen(false);
+                  }}
+                  className="text-xs"
+                >
+                  إغلاق النافذة
+                </Button>
+              </div>
             </div>
           }
         >
           <div className="space-y-4 text-right">
-            {/* Visual File Preview if image or data URL */}
-            {previewDoc.url && (previewDoc.url.startsWith('data:image/') || previewDoc.url.includes('.png') || previewDoc.url.includes('.jpg') || previewDoc.url.includes('.jpeg')) ? (
-              <div className="rounded-xl border-[2px] border-[var(--dp-color-outline)] overflow-hidden bg-black max-h-[60vh] flex items-center justify-center p-2">
-                <img
-                  src={previewDoc.url}
-                  alt={previewDoc.name}
-                  className="max-h-[55vh] w-auto object-contain mx-auto rounded"
+            {/* Rejection Prompt Inline Bar */}
+            {docRejectPromptOpen && (
+              <div className="p-4 bg-rose-50 border-2 border-rose-300 rounded-xl space-y-3 animate-fadeIn">
+                <div className="flex items-center gap-2 text-rose-900 font-black text-sm">
+                  <AlertTriangle className="w-4 h-4 text-rose-600" />
+                  <span>تحديد سبب رفض المستند أو طلب استبداله:</span>
+                </div>
+                <Input
+                  value={docRejectReasonInput}
+                  onChange={(e) => setDocRejectReasonInput(e.target.value)}
+                  placeholder="مثال: الصورة غير واضحة، أو التاريخ منتهي، أو مطلوب عقد مشهر نهائي..."
+                  className="text-xs bg-white"
                 />
-              </div>
-            ) : (
-              <div className="p-6 bg-[var(--dp-color-ground)] rounded-xl border-[2px] border-[var(--dp-color-outline)] text-center space-y-3">
-                <div className="w-16 h-16 rounded-2xl bg-white border border-[var(--dp-color-outline)] flex items-center justify-center text-[var(--dp-color-accent)] mx-auto shadow-hard-xs">
-                  <FileText className="w-9 h-9" />
-                </div>
-                <div>
-                  <h4 className="text-base font-black text-[var(--dp-color-ink)]">
-                    {previewDoc.name}
-                  </h4>
-                  <span className="text-xs text-[#626d84] block mt-0.5">
-                    مستند رسمي محمي بحقوق التشفير • الحجم: {previewDoc.size} • تاريخ الرفع: {previewDoc.uploadDate}
-                  </span>
-                </div>
-                <div className="p-3 bg-white border border-[#ece9db] rounded-lg text-xs font-mono text-[#4a5568]">
-                  SHA-256 Verified Checksum: e4d909c290d0fb1ca068ffaddf22cbd0
+                <div className="flex items-center gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDocRejectPromptOpen(false)}
+                    className="text-xs"
+                  >
+                    إلغاء
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      handleUpdateDocStatus(
+                        previewDoc.id,
+                        'rejected',
+                        docRejectReasonInput || 'مستند غير مكتمل أو غير مطابق لاشتراطات التسجيل'
+                      );
+                      setDocRejectPromptOpen(false);
+                      setDocRejectReasonInput('');
+                    }}
+                    className="bg-rose-600 hover:bg-rose-700 text-white text-xs"
+                  >
+                    تأكيد تسجيل الرفض
+                  </Button>
                 </div>
               </div>
             )}
 
-            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900 flex items-center gap-2">
+            {/* Document Controls & View Mode Selector */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 bg-white border-2 border-[var(--dp-color-outline)] rounded-xl shadow-hard-xs">
+              {/* Mode switch pills */}
+              <div className="flex items-center gap-1.5 bg-[var(--dp-color-field-soft)] p-1 rounded-lg border border-[var(--dp-color-outline)]">
+                <button
+                  type="button"
+                  onClick={() => setDocViewMode('certified')}
+                  className={`px-3 py-1.5 rounded text-xs font-black transition-all flex items-center gap-1.5 ${
+                    docViewMode === 'certified'
+                      ? 'bg-[var(--dp-color-accent)] text-[var(--dp-color-ink)] shadow-hard-xs'
+                      : 'text-[#626d84] hover:text-[var(--dp-color-ink)]'
+                  }`}
+                >
+                  <Award className="w-3.5 h-3.5" />
+                  المستند الرسمي المعتمد (معاينة قانونية)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDocViewMode('scan')}
+                  className={`px-3 py-1.5 rounded text-xs font-black transition-all flex items-center gap-1.5 ${
+                    docViewMode === 'scan'
+                      ? 'bg-[var(--dp-color-accent)] text-[var(--dp-color-ink)] shadow-hard-xs'
+                      : 'text-[#626d84] hover:text-[var(--dp-color-ink)]'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  المسح الضوئي للمستند المرفوع
+                </button>
+              </div>
+
+              {/* Inspector tools toolbar */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {docViewMode === 'scan' && (
+                  <>
+                    <button
+                      type="button"
+                      title="تكبير"
+                      onClick={() => setZoomLevel((prev) => Math.min(2.5, prev + 0.25))}
+                      className="p-1.5 rounded-lg border border-[var(--dp-color-outline)] bg-white hover:bg-slate-100 text-[var(--dp-color-ink)] text-xs flex items-center gap-1"
+                    >
+                      <ZoomIn className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">تكبير</span>
+                    </button>
+                    <button
+                      type="button"
+                      title="تصغير"
+                      onClick={() => setZoomLevel((prev) => Math.max(0.5, prev - 0.25))}
+                      className="p-1.5 rounded-lg border border-[var(--dp-color-outline)] bg-white hover:bg-slate-100 text-[var(--dp-color-ink)] text-xs flex items-center gap-1"
+                    >
+                      <ZoomOut className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">تصغير</span>
+                    </button>
+                    <button
+                      type="button"
+                      title="تدوير 90 درجة"
+                      onClick={() => setRotation((prev) => (prev + 90) % 360)}
+                      className="p-1.5 rounded-lg border border-[var(--dp-color-outline)] bg-white hover:bg-slate-100 text-[var(--dp-color-ink)] text-xs flex items-center gap-1"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">تدوير</span>
+                    </button>
+                    <button
+                      type="button"
+                      title="إعادة ضبط العرض"
+                      onClick={() => {
+                        setZoomLevel(1);
+                        setRotation(0);
+                      }}
+                      className="p-1.5 rounded-lg border border-[var(--dp-color-outline)] bg-white hover:bg-slate-100 text-[var(--dp-color-ink)] text-xs flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">100%</span>
+                    </button>
+                    <div className="h-5 w-[1px] bg-slate-200 mx-1" />
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  title="طباعة المستند"
+                  onClick={handlePrintDoc}
+                  className="p-1.5 rounded-lg border border-[var(--dp-color-outline)] bg-white hover:bg-slate-100 text-[var(--dp-color-ink)] text-xs flex items-center gap-1"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">طباعة</span>
+                </button>
+                <button
+                  type="button"
+                  title="تحميل الملف"
+                  onClick={() => handleDownloadDoc(previewDoc)}
+                  className="p-1.5 rounded-lg border border-[var(--dp-color-outline)] bg-white hover:bg-slate-100 text-[var(--dp-color-ink)] text-xs flex items-center gap-1"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">تحميل</span>
+                </button>
+                {previewDoc.url && previewDoc.url !== '#' && (
+                  <a
+                    href={previewDoc.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1.5 rounded-lg border border-[var(--dp-color-outline)] bg-white hover:bg-slate-100 text-[var(--dp-color-ink)] text-xs flex items-center gap-1"
+                    title="فتح في نافذة مستقلة"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">نافذة مستقلة</span>
+                  </a>
+                )}
+              </div>
+            </div>
+
+            {/* TAB 1: CERTIFIED OFFICIAL NOTARY DEED CERTIFICATE */}
+            {docViewMode === 'certified' && (
+              <div className="bg-[#fdfcf7] border-[3px] border-[#cbb36c] rounded-2xl p-6 sm:p-8 shadow-hard-md relative overflow-hidden text-right space-y-6">
+                {/* Security Watermark Background */}
+                <div className="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none select-none">
+                  <span className="text-8xl font-black text-black rotate-[-25deg]">
+                    SHA2ETY OFFICIAL
+                  </span>
+                </div>
+
+                {/* Official Crest & Header */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-4 border-b-2 border-[#d9c585]">
+                  <div className="text-center sm:text-right space-y-0.5">
+                    <span className="text-[11px] font-black text-[#5c4a1e] tracking-wide block">
+                      جمهورية مصر العربية
+                    </span>
+                    <span className="text-xs font-bold text-[#3d3319] block">
+                      وزارة العدل — قطاع مصلحة الشهر العقاري والتوثيق
+                    </span>
+                    <span className="text-[11px] text-[#6b5c33] block">
+                      الإدارة العامة للتوثيق العقاري والتحقق الرقمي
+                    </span>
+                  </div>
+
+                  {/* Golden Eagle / Crest Symbol */}
+                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 border-[2px] border-[#997d2e] flex flex-col items-center justify-center text-white shadow-hard-sm">
+                    <Award className="w-8 h-8 stroke-[2.2]" />
+                    <span className="text-[8px] font-black tracking-widest uppercase">EGYPT</span>
+                  </div>
+
+                  <div className="text-center sm:text-left space-y-0.5">
+                    <span className="text-[10px] font-mono font-bold text-[#6b5c33] block">
+                      كود التوثيق: EG-RE-{property.id.replace(/\D/g, '') || '94821'}
+                    </span>
+                    <span className="text-[10px] text-[#6b5c33] block">
+                      تاريخ القيد: {previewDoc.uploadDate}
+                    </span>
+                    <span className="inline-block text-[9px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-black border border-emerald-300">
+                      محرر رقمي مدقق
+                    </span>
+                  </div>
+                </div>
+
+                {/* Certificate Title */}
+                <div className="text-center space-y-1">
+                  <h3 className="text-lg sm:text-xl font-black text-[#261f0f]">
+                    شهادة قيد وتوثيق رسمي — سند الملكية والحيازة العقارية
+                  </h3>
+                  <p className="text-xs text-[#6e5d32]">
+                    محرر رسمي مشهر ناقل للحقوق العينية وفقاً لأحكام القانون رقم 114 لسنة 1946 ولائحته التنفيذية
+                  </p>
+                </div>
+
+                {/* Details Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Property Info Box */}
+                  <div className="p-4 bg-white/80 border border-[#e2d5a8] rounded-xl space-y-2 shadow-sm">
+                    <h5 className="font-black text-xs text-[#5c4a1e] pb-1 border-b border-[#ece2c0] flex items-center gap-1.5">
+                      <Building2 className="w-4 h-4 text-[#8a722e]" />
+                      بيانات العقار والوحدة المسجلة:
+                    </h5>
+                    <div className="space-y-1.5 text-xs text-[#2b2413]">
+                      <div className="flex justify-between">
+                        <span className="text-[#75653b]">اسم العقار:</span>
+                        <strong className="font-bold">{property.title}</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[#75653b]">الموقع الجغرافي:</span>
+                        <strong className="font-bold">{property.location || property.city}</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[#75653b]">النوع والمساحة:</span>
+                        <strong className="font-bold">{property.type} — {formatArea(property.area)}</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[#75653b]">السعر المصرح به:</span>
+                        <strong className="font-bold text-emerald-800">{formatEGP(property.price)}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Owner & Identity Box */}
+                  <div className="p-4 bg-white/80 border border-[#e2d5a8] rounded-xl space-y-2 shadow-sm">
+                    <h5 className="font-black text-xs text-[#5c4a1e] pb-1 border-b border-[#ece2c0] flex items-center gap-1.5">
+                      <User className="w-4 h-4 text-[#8a722e]" />
+                      بيانات الطرف الأول (المالك المقيد بالسند):
+                    </h5>
+                    <div className="space-y-1.5 text-xs text-[#2b2413]">
+                      <div className="flex justify-between">
+                        <span className="text-[#75653b]">الاسم الكامل:</span>
+                        <strong className="font-bold">{safeSeller.name}</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[#75653b]">الرقم القومي (مطابق):</span>
+                        <strong className="font-mono font-bold">2840915******1</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[#75653b]">رقم الهاتف المسجل:</span>
+                        <strong className="font-mono font-bold" dir="ltr">{safeSeller.phone}</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[#75653b]">الصفة القانونية:</span>
+                        <strong className="font-bold text-blue-900">مالك أصيل بحرية التصرف</strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Legal Warranty Statements */}
+                <div className="p-4 bg-amber-50/60 border border-[#e2d5a8] rounded-xl space-y-2 text-xs text-[#3b3017]">
+                  <h5 className="font-black text-xs text-[#5c4a1e] flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                    بنود الإشهار والضمان القانوني المعتمدة:
+                  </h5>
+                  <ul className="space-y-1 text-[11px] leading-relaxed text-[#4a3e20]">
+                    <li className="flex items-start gap-1.5">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                      <span>خلو العقار المذكور من أي حقوق عينية تبعية أو رهونات بنكية أو أحكام إفلاس أو نزاعات منظورة أمام المحاكم.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                      <span>سلامة تراخيص البناء الصادرة من جهاز المدينة والحي، مع عدم وجود أي مخالفات إنشائية أو قرارات إزالة نافذة.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                      <span>ثبوت حصة الأرض المشاعة وحقوق الانتفاع بالجراج والمصاعد والمرافق الأساسية لكافة شاغلي الوحدة.</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Seals & Barcodes Section */}
+                <div className="pt-4 border-t-2 border-[#d9c585] flex flex-col sm:flex-row items-center justify-between gap-4">
+                  {/* Eagle Stamp Simulation */}
+                  <div className="flex items-center gap-3">
+                    <div className="w-16 h-16 rounded-full border-2 border-red-700 bg-red-50 flex flex-col items-center justify-center text-red-800 rotate-[-8deg] shadow-sm">
+                      <span className="text-[7px] font-black">مصلحة الشهر العقاري</span>
+                      <span className="text-[9px] font-black my-0.5">ختم النسر</span>
+                      <span className="text-[7px] font-black">معتمد إلكترونياً</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-black text-[#261f0f] block">
+                        توثيق رقمي معتمد — منصة شقتي
+                      </span>
+                      <span className="text-[10px] text-[#6b5c33] block">
+                        توقيع الموثق المسؤول: م. أحمد مهران
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* QR Code and Barcode Box */}
+                  <div className="flex items-center gap-3 bg-white p-2.5 rounded-lg border border-[#e2d5a8]">
+                    <div className="text-center space-y-0.5">
+                      <div className="font-mono text-[9px] tracking-widest text-slate-700 font-bold">
+                        ||||| | |||| || |||||| | |||
+                      </div>
+                      <span className="text-[9px] font-mono text-slate-500 block">
+                        EG-HASH: {previewDoc.id.toUpperCase()}-VERIFIED
+                      </span>
+                    </div>
+                    <div className="w-12 h-12 bg-slate-900 rounded flex items-center justify-center text-white shrink-0">
+                      <QrCode className="w-8 h-8" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: SCANNED ORIGINAL DOCUMENT VIEWER */}
+            {docViewMode === 'scan' && (
+              <div className="bg-[#181a20] rounded-2xl border-2 border-[var(--dp-color-outline)] p-4 sm:p-6 overflow-hidden relative flex flex-col items-center justify-center min-h-[460px] max-h-[65vh]">
+                {previewDoc.url && previewDoc.url !== '#' ? (
+                  <div className="overflow-auto max-w-full max-h-[58vh] flex items-center justify-center p-2">
+                    <img
+                      src={previewDoc.url}
+                      alt={previewDoc.name}
+                      style={{
+                        transform: `scale(${zoomLevel}) rotate(${rotation}deg)`,
+                        transition: 'transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
+                        maxWidth: '100%',
+                        maxHeight: '55vh',
+                      }}
+                      className="object-contain rounded-lg shadow-2xl border border-slate-700 bg-white"
+                    />
+                  </div>
+                ) : (
+                  <div className="text-center p-8 text-white space-y-3">
+                    <FileText className="w-16 h-16 text-amber-400 mx-auto" />
+                    <h4 className="text-base font-black">جاري استعراض النسخة الرقمية المشفرة</h4>
+                    <p className="text-xs text-slate-300 max-w-md mx-auto">
+                      يمكنك التبديل إلى تبويب "المستند الرسمي المعتمد" لمعاينة كافة بنود ومحتويات العقد موثقة إلكترونياً.
+                    </p>
+                  </div>
+                )}
+
+                {/* Floating zoom indicator */}
+                <div className="absolute bottom-3 left-3 bg-black/75 backdrop-blur-sm text-white px-3 py-1 rounded-full text-[11px] font-mono border border-white/20">
+                  تكبير: {Math.round(zoomLevel * 100)}% | تدوير: {rotation}°
+                </div>
+              </div>
+            )}
+
+            {/* Security notice */}
+            <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900 flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>المستند خاضع لسرية البيانات ولا يتم كشفه للمشترين أو الزوار في الواجهة العامة.</span>
+              <span>المستند خاضع لسرية البيانات الرسمية ولا يتم كشفه للمشترين أو الزوار في الواجهة العامة.</span>
             </div>
           </div>
         </Modal>

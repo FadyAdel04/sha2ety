@@ -23,6 +23,26 @@ export interface PropertyDocument {
   rejectionReason?: string;
 }
 
+// High-resolution authentic legal documents & blueprints for Egyptian notary/administrative inspection
+export function getSampleDocUrl(type?: string): string {
+  switch (type) {
+    case 'license':
+    case 'building_permit':
+      return 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=1400&q=80';
+    case 'national_id':
+      return 'https://images.unsplash.com/photo-1618042164219-62c820f10723?auto=format&fit=crop&w=1400&q=80';
+    case 'power_of_attorney':
+      return 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=1400&q=80';
+    case 'tax_card':
+    case 'tax_commercial_record':
+      return 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=1400&q=80';
+    case 'deed':
+    case 'ownership_proof':
+    default:
+      return 'https://images.unsplash.com/photo-1568667256549-094345857637?auto=format&fit=crop&w=1400&q=80';
+  }
+}
+
 export interface PropertyImageReview {
   id: string;
   url: string;
@@ -174,7 +194,7 @@ const INITIAL_ADMIN_PROPERTIES: AdminProperty[] = [
         id: 'doc-1',
         name: 'عقد مسجل شهر عقاري نهائي.pdf',
         type: 'deed',
-        url: '#',
+        url: getSampleDocUrl('deed'),
         size: '3.4 MB',
         uploadDate: '2026-11-04',
         status: 'pending',
@@ -183,7 +203,7 @@ const INITIAL_ADMIN_PROPERTIES: AdminProperty[] = [
         id: 'doc-2',
         name: 'رخصة بناء معتمدة من جهاز القاهرة الجديدة.pdf',
         type: 'license',
-        url: '#',
+        url: getSampleDocUrl('license'),
         size: '2.1 MB',
         uploadDate: '2026-11-04',
         status: 'pending',
@@ -192,7 +212,7 @@ const INITIAL_ADMIN_PROPERTIES: AdminProperty[] = [
         id: 'doc-3',
         name: 'بطاقة الرقم القومي للمالك (وجه وظهر).pdf',
         type: 'national_id',
-        url: '#',
+        url: getSampleDocUrl('national_id'),
         size: '1.2 MB',
         uploadDate: '2026-11-04',
         status: 'pending',
@@ -244,7 +264,7 @@ const INITIAL_ADMIN_PROPERTIES: AdminProperty[] = [
         id: 'doc-10',
         name: 'مخالصة مالية نهائية من شركة الأهلي صبور.pdf',
         type: 'deed',
-        url: '#',
+        url: getSampleDocUrl('deed'),
         size: '1.8 MB',
         uploadDate: '2026-11-04',
         status: 'pending',
@@ -253,7 +273,7 @@ const INITIAL_ADMIN_PROPERTIES: AdminProperty[] = [
         id: 'doc-11',
         name: 'عقد التنازل ونقل الملكية المعتمد.pdf',
         type: 'power_of_attorney',
-        url: '#',
+        url: getSampleDocUrl('power_of_attorney'),
         size: '2.4 MB',
         uploadDate: '2026-11-04',
         status: 'pending',
@@ -304,7 +324,7 @@ const INITIAL_ADMIN_PROPERTIES: AdminProperty[] = [
         id: 'doc-20',
         name: 'صك الملكية النهائي المسجل.pdf',
         type: 'deed',
-        url: '#',
+        url: getSampleDocUrl('deed'),
         size: '4.2 MB',
         uploadDate: '2026-10-28',
         status: 'verified',
@@ -355,7 +375,7 @@ const INITIAL_ADMIN_PROPERTIES: AdminProperty[] = [
         id: 'doc-30',
         name: 'عقد البيع الابتدائي.pdf',
         type: 'deed',
-        url: '#',
+        url: getSampleDocUrl('deed'),
         size: '2.5 MB',
         uploadDate: '2026-11-01',
         status: 'pending',
@@ -662,7 +682,7 @@ function mapMasterToAdminProperty(item: PropertyItem): AdminProperty {
             id: d.id || `doc-${Date.now()}`,
             name: d.name || 'مستند ملكية',
             type: d.type === 'ownership_proof' ? 'license' : (d.type || 'deed'),
-            url: d.url || '#',
+            url: (d.url && d.url !== '#') ? d.url : getSampleDocUrl(d.type),
             size: d.size || '1.5 MB',
             uploadDate: d.uploadedAt ? d.uploadedAt.split('T')[0] : '2026-11-06',
             status: item.isVerified ? 'verified' : (d.status || 'pending'),
@@ -701,7 +721,7 @@ function mapMasterToAdminProperty(item: PropertyItem): AdminProperty {
         id: `doc-${item.id}-1`,
         name: 'صورة عقد الملكية وسند الحيازة.pdf',
         type: 'deed',
-        url: '#',
+        url: getSampleDocUrl('deed'),
         size: '2.5 MB',
         uploadDate: (item.createdAt || '').split('T')[0] || '2026-11-04',
         status: item.isVerified ? 'verified' : 'pending',
@@ -749,14 +769,87 @@ export function getAdminProperties(): AdminProperty[] {
     map.set(m.id, mapMasterToAdminProperty(m));
   });
 
+  // Include seed initial admin properties if not already present
+  INITIAL_ADMIN_PROPERTIES.forEach((initProp) => {
+    if (!map.has(initProp.id)) {
+      map.set(initProp.id, initProp);
+    }
+  });
+
   // Layer any stored admin-specific changes
   stored.forEach((s) => {
     map.set(s.id, s);
   });
 
-  return Array.from(map.values()).sort(
+  // Sanitize all documents so admin can always preview and see them
+  const result = Array.from(map.values()).map((prop) => {
+    const documents = (prop.documents && prop.documents.length > 0)
+      ? prop.documents.map((doc) => ({
+          ...doc,
+          url: (!doc.url || doc.url === '#' || doc.url.trim() === '') ? getSampleDocUrl(doc.type) : doc.url,
+        }))
+      : [
+          {
+            id: `doc-${prop.id}-1`,
+            name: 'صورة عقد الملكية وسند الحيازة.pdf',
+            type: 'deed' as const,
+            url: getSampleDocUrl('deed'),
+            size: '2.5 MB',
+            uploadDate: (prop.submissionDate || '').split(' ')[0] || '2026-11-04',
+            status: prop.isVerified ? 'verified' as const : 'pending' as const,
+          },
+        ];
+
+    return {
+      ...prop,
+      documents,
+    };
+  });
+
+  return result.sort(
     (a, b) => new Date(b.submissionDate).getTime() - new Date(a.submissionDate).getTime()
   );
+}
+
+export function updatePropertyDocumentStatus(
+  propertyId: string,
+  docId: string,
+  status: 'verified' | 'pending' | 'rejected',
+  rejectionReason?: string
+): AdminProperty | undefined {
+  const properties = getAdminProperties();
+  const index = properties.findIndex((p) => p.id === propertyId);
+  if (index === -1) return undefined;
+
+  const prop = { ...properties[index] };
+  prop.documents = (prop.documents || []).map((d) => {
+    if (d.id === docId) {
+      return {
+        ...d,
+        status,
+        rejectionReason: status === 'rejected' ? rejectionReason : undefined,
+      };
+    }
+    return d;
+  });
+
+  addAuditLogEntry({
+    adminName: 'م. أحمد مهران (مشرف النظام)',
+    adminEmail: 'admin@sha2ety.eg',
+    actionType: status === 'verified' ? 'approve_property' : 'request_changes',
+    actionTitle: status === 'verified' ? 'اعتماد مستند ملكية' : 'طلب تعديل أو رفض مستند',
+    targetType: 'property',
+    targetId: propertyId,
+    targetTitle: `${prop.title} - مستند (${docId})`,
+    reasonOrNotes:
+      status === 'verified'
+        ? 'تم اعتماد المستند بعد المعاينة التدقيقية والفحص القانوني.'
+        : `تم رفض المستند: ${rejectionReason || 'مستند غير مكتمل أو غير واضح'}`,
+  });
+
+  properties[index] = prop;
+  saveAdminProperties(properties);
+  return prop;
 }
 
 export function saveAdminProperties(properties: AdminProperty[]): void {

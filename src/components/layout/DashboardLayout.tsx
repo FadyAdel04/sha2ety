@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -117,6 +117,17 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
   const displayName = user?.fullName || (role === 'seller' ? 'محمد السيد' : role === 'admin' ? 'م. المشرف' : 'كريم عبد الله');
   const userInitial = displayName.trim()[0] || 'ش';
+
+  const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (mainRef.current) {
+      mainRef.current.scrollTop = 0;
+    }
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+    if (document.documentElement) document.documentElement.scrollTop = 0;
+    if (document.body) document.body.scrollTop = 0;
+  }, [location.pathname, location.search]);
 
   return (
     <div className="min-h-screen bg-[var(--dp-color-ground)] text-[var(--dp-color-ink)] flex flex-col selection:bg-[var(--dp-color-selection)] selection:text-[var(--dp-color-accent)]">
@@ -299,7 +310,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
         </aside>
 
         {/* Content Area */}
-        <main className="flex-1 p-3 sm:p-6 lg:p-8 pb-28 lg:pb-8 overflow-y-auto">
+        <main ref={mainRef} className="flex-1 p-3 sm:p-6 lg:p-8 pb-28 lg:pb-8 overflow-y-auto">
           <div className="max-w-6xl mx-auto space-y-6">
             {/* Header Section */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b-2 border-[#ece9db] text-right">

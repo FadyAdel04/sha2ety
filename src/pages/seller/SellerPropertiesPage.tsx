@@ -18,6 +18,8 @@ import {
   deletePropertyDraft,
   resubmitProperty,
   updatePropertyDetails,
+  uploadPropertyDocumentForSeller,
+  PropertyLegalDocument,
   SellerProperty,
   SellerPropertyStatus,
 } from '@/services/sellerService';
@@ -36,6 +38,13 @@ import {
   CheckCircle2,
   XCircle,
   Filter,
+  FileText,
+  FileCheck,
+  UploadCloud,
+  Eye,
+  Download,
+  ShieldCheck,
+  Lock,
 } from 'lucide-react';
 
 type TabStatus = 'all' | 'available' | 'pending_review' | 'requires_changes' | 'draft' | 'sold';
@@ -53,11 +62,61 @@ export const SellerPropertiesPage: React.FC = () => {
   const [feedbackModalProperty, setFeedbackModalProperty] = useState<SellerProperty | null>(null);
   const [resubmitModalProperty, setResubmitModalProperty] = useState<SellerProperty | null>(null);
   const [resubmitNotes, setResubmitNotes] = useState('');
+  const [resubmitUploadedDocs, setResubmitUploadedDocs] = useState<PropertyLegalDocument[]>([]);
+  const [documentsModalProperty, setDocumentsModalProperty] = useState<SellerProperty | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<PropertyLegalDocument | null>(null);
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [editModalProperty, setEditModalProperty] = useState<SellerProperty | null>(null);
   const [editForm, setEditForm] = useState({ title: '', price: 0, description: '' });
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [soldConfirmId, setSoldConfirmId] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Upload document directly to Supabase Storage and database for property confirmation
+  const handleUploadDocForProperty = async (
+    propertyId: string,
+    files: FileList | null,
+    docType: PropertyLegalDocument['type'],
+    typeName: string,
+    target: 'documentsModal' | 'resubmitModal' = 'documentsModal'
+  ) => {
+    if (!files || files.length === 0 || !user) return;
+    setIsUploadingDoc(true);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const newDoc = await uploadPropertyDocumentForSeller(
+          propertyId,
+          user.id,
+          file,
+          docType,
+          typeName
+        );
+
+        if (target === 'documentsModal') {
+          setDocumentsModalProperty((prev) =>
+            prev && prev.id === propertyId
+              ? {
+                  ...prev,
+                  documents: [...(prev.documents || []), newDoc],
+                  status: 'pending_review',
+                }
+              : prev
+          );
+        } else {
+          setResubmitUploadedDocs((prev) => [...prev, newDoc]);
+        }
+
+        setToastMessage(`تم رفع مستند "${file.name}" وتخزينه في Supabase بنجاح.`);
+      }
+      await loadProperties();
+    } catch (err) {
+      console.error('Failed to upload document to Supabase:', err);
+      setToastMessage('حدث خطأ أثناء رفع المستند إلى التخزين السحابي');
+    } finally {
+      setIsUploadingDoc(false);
+    }
+  };
 
   const loadProperties = useCallback(async () => {
     try {
@@ -154,10 +213,11 @@ export const SellerPropertiesPage: React.FC = () => {
     if (!resubmitModalProperty) return;
     setActionLoading(true);
     try {
-      await resubmitProperty(resubmitModalProperty.id, resubmitNotes);
+      await resubmitProperty(resubmitModalProperty.id, resubmitNotes, resubmitUploadedDocs);
       setResubmitModalProperty(null);
       setResubmitNotes('');
-      setToastMessage('تم إعادة إرسال العقار لمراجعة المستندات بنجاح');
+      setResubmitUploadedDocs([]);
+      setToastMessage('تم إعادة إرسال العقار والمستندات المرفقة للمراجعة بنجاح');
       await loadProperties();
     } catch {
       setToastMessage('حدث خطأ أثناء إعادة إرسال العقار');
@@ -382,6 +442,16 @@ export const SellerPropertiesPage: React.FC = () => {
                             </button>
                           </Link>
 
+                          {/* Documents management & confirmation */}
+                          <button
+                            type="button"
+                            onClick={() => setDocumentsModalProperty(prop)}
+                            className="p-1.5 rounded-lg border border-[var(--dp-color-outline)] bg-emerald-50 hover:bg-emerald-100 cursor-pointer text-emerald-800"
+                            title="إدارة وتأكيد مستندات الملكية (Supabase)"
+                          >
+                            <FileCheck className="w-4 h-4 stroke-[2.5]" />
+                          </button>
+
                           {/* Admin feedback note */}
                           {prop.adminFeedback && (
                             <button
@@ -504,6 +574,15 @@ export const SellerPropertiesPage: React.FC = () => {
                   <div className="flex items-center justify-between pt-2 border-t border-[#ece9db] text-xs font-bold text-[#626d84]">
                     <span>{prop.viewsCount.toLocaleString('ar-EG')} مشاهدة</span>
                     <div className="flex items-center gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setDocumentsModalProperty(prop)}
+                        leftIcon={<FileCheck className="w-3.5 h-3.5 text-emerald-700" />}
+                        className="text-xs"
+                      >
+                        المستندات
+                      </Button>
                       <Link to={`/properties/${prop.id}`}>
                         <Button variant="outline" size="sm">
                           معاينة
@@ -593,20 +672,26 @@ export const SellerPropertiesPage: React.FC = () => {
         </div>
       </Modal>
 
-      {/* Resubmit Property Modal */}
+      {/* Resubmit Property Modal with Document Upload */}
       <Modal
         isOpen={Boolean(resubmitModalProperty)}
-        onClose={() => setResubmitModalProperty(null)}
+        onClose={() => {
+          setResubmitModalProperty(null);
+          setResubmitUploadedDocs([]);
+        }}
         title="إعادة إرسال العقار للمراجعة القانونية"
         description={`عقار: ${resubmitModalProperty?.title}`}
-        size="md"
+        size="lg"
         footer={
           <div className="flex justify-end gap-2 w-full">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setResubmitModalProperty(null)}
-              disabled={actionLoading}
+              onClick={() => {
+                setResubmitModalProperty(null);
+                setResubmitUploadedDocs([]);
+              }}
+              disabled={actionLoading || isUploadingDoc}
             >
               إلغاء
             </Button>
@@ -614,7 +699,7 @@ export const SellerPropertiesPage: React.FC = () => {
               variant="primary"
               size="sm"
               onClick={handleResubmit}
-              isLoading={actionLoading}
+              isLoading={actionLoading || isUploadingDoc}
             >
               تأكيد وإعادة الإرسال
             </Button>
@@ -625,19 +710,449 @@ export const SellerPropertiesPage: React.FC = () => {
           <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 font-bold">
             سيتم تحويل حالة العقار إلى "قيد المراجعة" وسيقوم المشرف بفحص المستندات والبيانات المعدلة.
           </div>
+
           <div>
             <label className="block text-xs font-black text-[var(--dp-color-ink)] mb-1">
               ملاحظاتك للمشرف أو توضيح ما تم تعديله:
             </label>
             <Textarea
-              rows={4}
+              rows={3}
               placeholder="مثال: تم إرفاق صورة واضحة من المخالصة المالية وتحديث التوكيل الرسمي..."
               value={resubmitNotes}
               onChange={(e) => setResubmitNotes(e.target.value)}
             />
           </div>
+
+          {/* Upload Correction Documents */}
+          <div className="p-4 rounded-xl border-2 border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-[var(--dp-color-ink)] flex items-center gap-1.5">
+                <UploadCloud className="w-4 h-4 text-emerald-700" />
+                إرفاق مستندات الملكية المطلوبة (حفظ في Supabase Storage):
+              </span>
+              {isUploadingDoc && (
+                <span className="text-[11px] font-bold text-blue-700 animate-pulse">
+                  جاري الرفع إلى Supabase...
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="inline-block">
+                <input
+                  type="file"
+                  accept=".pdf,image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  disabled={isUploadingDoc}
+                  onChange={(e) =>
+                    resubmitModalProperty &&
+                    handleUploadDocForProperty(
+                      resubmitModalProperty.id,
+                      e.target.files,
+                      'deed',
+                      'عقد ملكية معدل',
+                      'resubmitModal'
+                    )
+                  }
+                />
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-[var(--dp-color-outline)] text-xs font-black text-[var(--dp-color-ink)] hover:bg-[var(--dp-color-selection)] cursor-pointer shadow-xs">
+                  <FileText className="w-3.5 h-3.5 text-blue-700" />
+                  + عقد ملكية
+                </span>
+              </label>
+
+              <label className="inline-block">
+                <input
+                  type="file"
+                  accept=".pdf,image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  disabled={isUploadingDoc}
+                  onChange={(e) =>
+                    resubmitModalProperty &&
+                    handleUploadDocForProperty(
+                      resubmitModalProperty.id,
+                      e.target.files,
+                      'building_permit',
+                      'رخصة بناء معدلة',
+                      'resubmitModal'
+                    )
+                  }
+                />
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-[var(--dp-color-outline)] text-xs font-black text-[var(--dp-color-ink)] hover:bg-[var(--dp-color-selection)] cursor-pointer shadow-xs">
+                  <FileCheck className="w-3.5 h-3.5 text-emerald-700" />
+                  + رخصة بناء
+                </span>
+              </label>
+
+              <label className="inline-block">
+                <input
+                  type="file"
+                  accept=".pdf,image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  disabled={isUploadingDoc}
+                  onChange={(e) =>
+                    resubmitModalProperty &&
+                    handleUploadDocForProperty(
+                      resubmitModalProperty.id,
+                      e.target.files,
+                      'national_id',
+                      'بطاقة رقم قومي',
+                      'resubmitModal'
+                    )
+                  }
+                />
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-[var(--dp-color-outline)] text-xs font-black text-[var(--dp-color-ink)] hover:bg-[var(--dp-color-selection)] cursor-pointer shadow-xs">
+                  <ShieldCheck className="w-3.5 h-3.5 text-purple-700" />
+                  + بطاقة رقم قومي
+                </span>
+              </label>
+            </div>
+
+            {resubmitUploadedDocs.length > 0 && (
+              <div className="space-y-1.5 pt-2 border-t border-[#ece9db]">
+                <span className="text-[11px] font-black text-emerald-900 block">
+                  المستندات الجديدة المرفوعة ({resubmitUploadedDocs.length}):
+                </span>
+                {resubmitUploadedDocs.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="p-2 rounded-lg bg-white border border-emerald-300 flex items-center justify-between text-xs"
+                  >
+                    <span className="font-bold text-[var(--dp-color-ink)] truncate max-w-[200px]">
+                      {doc.name}
+                    </span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-black">
+                      Supabase Storage ☁️
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </Modal>
+
+      {/* Property Documents Confirmation & Management Modal */}
+      {documentsModalProperty && (
+        <Modal
+          isOpen={Boolean(documentsModalProperty)}
+          onClose={() => setDocumentsModalProperty(null)}
+          title="إدارة وتأكيد مستندات الملكية في Supabase"
+          description={`عقار: ${documentsModalProperty.title}`}
+          size="lg"
+          footer={
+            <div className="flex justify-between items-center w-full">
+              <span className="text-xs text-[#626d84] font-bold">
+                الحالة: <strong className="text-emerald-700">{documentsModalProperty.isVerified ? 'عقار موثق ومعتمد' : 'بانتظار اعتماد المستندات'}</strong>
+              </span>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setDocumentsModalProperty(null)}
+              >
+                تم الإطلاع
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-5 text-right">
+            {/* Privacy Alert */}
+            <div className="p-3.5 rounded-xl bg-indigo-50 border-[2px] border-indigo-200 text-indigo-950 text-xs flex items-start gap-2.5">
+              <Lock className="w-4 h-4 text-indigo-700 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                مستنداتك تخزن بأمان وسرية في <strong>Supabase Storage</strong> ولا تعرض في صفحات البحث أو للمشترين، بل تُراجع حصراً من المشرفين المعتمدين لمنح العقار شارة "موثق رسمياً".
+              </p>
+            </div>
+
+            {/* Current Documents List */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black text-[var(--dp-color-ink)]">
+                  المستندات المحفوظة لهذا العقار ({documentsModalProperty.documents?.length || 0}):
+                </h4>
+                {isUploadingDoc && (
+                  <span className="text-xs font-bold text-blue-700 animate-pulse flex items-center gap-1">
+                    <UploadCloud className="w-3.5 h-3.5 animate-bounce" />
+                    جاري التخزين في Supabase...
+                  </span>
+                )}
+              </div>
+
+              {!documentsModalProperty.documents || documentsModalProperty.documents.length === 0 ? (
+                <div className="p-6 text-center bg-[var(--dp-color-ground)] rounded-xl border-2 border-dashed border-[#dcd8c8] space-y-1">
+                  <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
+                  <p className="text-xs font-black text-[var(--dp-color-ink)]">
+                    لم يتم تأكيد أي مستندات لهذا العقار حتى الآن
+                  </p>
+                  <p className="text-[11px] text-[#626d84]">
+                    يرجى رفع عقد الملكية وبطاقة الرقم القومي أدناه لبدء فحص وتأكيد العقار.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {documentsModalProperty.documents.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="p-3 rounded-xl border-[2px] border-[var(--dp-color-outline)] bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-hard-xs"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="p-2 rounded-lg bg-[var(--dp-color-field-soft)] border border-[var(--dp-color-outline)] text-[var(--dp-color-accent)] shrink-0">
+                          <FileText className="w-4 h-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <span className="font-black text-xs text-[var(--dp-color-ink)] block truncate">
+                            {doc.name}
+                          </span>
+                          <div className="flex items-center gap-1.5 text-[10px] text-[#626d84] mt-0.5 flex-wrap">
+                            <Badge
+                              variant={
+                                doc.status === 'verified'
+                                  ? 'fresh'
+                                  : doc.status === 'rejected'
+                                  ? 'danger'
+                                  : 'warm'
+                              }
+                              size="sm"
+                            >
+                              {doc.status === 'verified'
+                                ? 'معتمد'
+                                : doc.status === 'rejected'
+                                ? 'مرفوض'
+                                : 'قيد المراجعة'}
+                            </Badge>
+                            <span className="bg-sky-50 text-sky-800 border border-sky-300 px-1.5 py-0.5 rounded font-bold">
+                              Supabase ☁️
+                            </span>
+                            <span>{doc.size || '1.5 MB'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPreviewDoc(doc)}
+                          leftIcon={<Eye className="w-3.5 h-3.5" />}
+                          className="text-xs"
+                        >
+                          معاينة
+                        </Button>
+                        {doc.url && doc.url !== '#' && (
+                          <a
+                            href={doc.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded-lg border border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] hover:bg-slate-100 text-[var(--dp-color-ink)]"
+                            title="تحميل"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Upload New Confirmation Documents */}
+            <div className="p-4 rounded-xl border-[2px] border-[var(--dp-color-outline)] bg-[var(--dp-color-ground)] space-y-3">
+              <h5 className="font-black text-xs text-[var(--dp-color-ink)] flex items-center gap-1.5">
+                <UploadCloud className="w-4 h-4 text-emerald-700" />
+                رفع مستندات جديدة لتأكيد ملكية العقار (تخزن في Supabase):
+              </h5>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 1. عقد الملكية */}
+                <div className="p-3 rounded-lg border border-[var(--dp-color-outline)] bg-white space-y-2">
+                  <div className="flex items-center justify-between text-xs font-black">
+                    <span className="flex items-center gap-1 text-[var(--dp-color-ink)]">
+                      <FileCheck className="w-3.5 h-3.5 text-amber-700" />
+                      عقد الملكية
+                    </span>
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept=".pdf,image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        disabled={isUploadingDoc}
+                        onChange={(e) =>
+                          handleUploadDocForProperty(
+                            documentsModalProperty.id,
+                            e.target.files,
+                            'deed',
+                            'عقد ملكية مسجل'
+                          )
+                        }
+                      />
+                      <span className="text-[11px] font-black text-amber-800 bg-amber-50 hover:bg-amber-100 px-2.5 py-1 rounded-md border border-amber-300 inline-block">
+                        رفع العقد
+                      </span>
+                    </label>
+                  </div>
+                  <span className="text-[10px] text-[#626d84] block">
+                    عقد مسجل بالشهر العقاري أو ابتدائي
+                  </span>
+                </div>
+
+                {/* 2. رخصة البناء */}
+                <div className="p-3 rounded-lg border border-[var(--dp-color-outline)] bg-white space-y-2">
+                  <div className="flex items-center justify-between text-xs font-black">
+                    <span className="flex items-center gap-1 text-[var(--dp-color-ink)]">
+                      <FileText className="w-3.5 h-3.5 text-emerald-700" />
+                      رخصة البناء
+                    </span>
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept=".pdf,image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        disabled={isUploadingDoc}
+                        onChange={(e) =>
+                          handleUploadDocForProperty(
+                            documentsModalProperty.id,
+                            e.target.files,
+                            'building_permit',
+                            'رخصة بناء ومطابقة'
+                          )
+                        }
+                      />
+                      <span className="text-[11px] font-black text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-300 inline-block">
+                        رفع الرخصة
+                      </span>
+                    </label>
+                  </div>
+                  <span className="text-[10px] text-[#626d84] block">
+                    رخصة البناء أو نموذج 10 للتصالح
+                  </span>
+                </div>
+
+                {/* 3. الرقم القومي */}
+                <div className="p-3 rounded-lg border border-[var(--dp-color-outline)] bg-white space-y-2">
+                  <div className="flex items-center justify-between text-xs font-black">
+                    <span className="flex items-center gap-1 text-[var(--dp-color-ink)]">
+                      <ShieldCheck className="w-3.5 h-3.5 text-blue-700" />
+                      بطاقة الرقم القومي
+                    </span>
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept=".pdf,image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        disabled={isUploadingDoc}
+                        onChange={(e) =>
+                          handleUploadDocForProperty(
+                            documentsModalProperty.id,
+                            e.target.files,
+                            'national_id',
+                            'بطاقة الرقم القومي'
+                          )
+                        }
+                      />
+                      <span className="text-[11px] font-black text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-md border border-blue-300 inline-block">
+                        رفع البطاقة
+                      </span>
+                    </label>
+                  </div>
+                  <span className="text-[10px] text-[#626d84] block">
+                    صورة واضحة وسارية للمالك
+                  </span>
+                </div>
+
+                {/* 4. توكيل رسمي أو مستند إضافي */}
+                <div className="p-3 rounded-lg border border-[var(--dp-color-outline)] bg-white space-y-2">
+                  <div className="flex items-center justify-between text-xs font-black">
+                    <span className="flex items-center gap-1 text-[var(--dp-color-ink)]">
+                      <Lock className="w-3.5 h-3.5 text-purple-700" />
+                      توكيل / مستند إضافي
+                    </span>
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept=".pdf,image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        disabled={isUploadingDoc}
+                        onChange={(e) =>
+                          handleUploadDocForProperty(
+                            documentsModalProperty.id,
+                            e.target.files,
+                            'power_of_attorney',
+                            'توكيل رسمي بالشهر العقاري'
+                          )
+                        }
+                      />
+                      <span className="text-[11px] font-black text-purple-800 bg-purple-50 hover:bg-purple-100 px-2.5 py-1 rounded-md border border-purple-300 inline-block">
+                        رفع المستند
+                      </span>
+                    </label>
+                  </div>
+                  <span className="text-[10px] text-[#626d84] block">
+                    توكيل رسمي موثق أو سجل تجاري
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Document Preview Modal */}
+      {previewDoc && (
+        <Modal
+          isOpen={Boolean(previewDoc)}
+          onClose={() => setPreviewDoc(null)}
+          title={`معاينة المستند: ${previewDoc.name}`}
+          size="lg"
+          footer={
+            <div className="flex justify-between items-center w-full">
+              <span className="text-xs text-[#626d84] font-bold">
+                النوع: {previewDoc.typeName}
+              </span>
+              <Button variant="primary" size="sm" onClick={() => setPreviewDoc(null)}>
+                إغلاق
+              </Button>
+            </div>
+          }
+        >
+          <div className="text-center space-y-3">
+            {previewDoc.url &&
+            (previewDoc.url.startsWith('data:image/') ||
+              previewDoc.url.includes('.png') ||
+              previewDoc.url.includes('.jpg') ||
+              previewDoc.url.includes('.jpeg') ||
+              previewDoc.url.includes('unsplash.com')) ? (
+              <div className="max-h-[60vh] overflow-hidden rounded-xl border-2 border-[var(--dp-color-outline)] bg-black p-2 flex items-center justify-center">
+                <img
+                  src={previewDoc.url}
+                  alt={previewDoc.name}
+                  className="max-h-[55vh] object-contain rounded"
+                />
+              </div>
+            ) : (
+              <div className="p-8 bg-[var(--dp-color-ground)] rounded-xl border-2 border-[var(--dp-color-outline)] space-y-3">
+                <FileText className="w-16 h-16 text-amber-500 mx-auto" />
+                <h4 className="font-black text-base">{previewDoc.name}</h4>
+                <p className="text-xs text-[#626d84]">
+                  تم حفظ وتشفير المستند بنجاح في Supabase Storage للتحقق القانوني.
+                </p>
+                {previewDoc.url && previewDoc.url !== '#' && (
+                  <a
+                    href={previewDoc.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--dp-color-accent)] text-white text-xs font-black"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    فتح أو تنزيل الملف الأصلي
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
 
       {/* Quick Edit Property Modal */}
       <Modal

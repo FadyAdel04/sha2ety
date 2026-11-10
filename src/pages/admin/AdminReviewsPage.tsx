@@ -10,6 +10,7 @@ import { useAuth } from '@/context/AuthContext';
 import {
   getAdminProperties,
   AdminProperty,
+  getSampleDocUrl,
 } from '@/services/adminService';
 import {
   sbFetchReviewQueue,
@@ -90,17 +91,22 @@ export const AdminReviewsPage: React.FC = () => {
               approvedCount: 0,
               rejectedCount: 0,
             },
-            documents: (matched?.documents && matched.documents.length > 0) ? matched.documents : [
-              {
-                id: `doc-${p.id}-1`,
-                name: 'عقد الملكية الموثق أو سند الملكية.pdf',
-                type: 'deed',
-                url: '#',
-                size: '2.5 MB',
-                uploadDate: (p.created_at || '').slice(0, 10) || '2026-11-04',
-                status: 'pending',
-              },
-            ],
+            documents: (matched?.documents && matched.documents.length > 0)
+              ? matched.documents.map((d) => ({
+                  ...d,
+                  url: (!d.url || d.url === '#' || d.url.trim() === '') ? getSampleDocUrl(d.type) : d.url,
+                }))
+              : [
+                  {
+                    id: `doc-${p.id}-1`,
+                    name: 'عقد الملكية الموثق أو سند الملكية.pdf',
+                    type: 'deed',
+                    url: getSampleDocUrl('deed'),
+                    size: '2.5 MB',
+                    uploadDate: (p.created_at || '').slice(0, 10) || '2026-11-04',
+                    status: 'pending',
+                  },
+                ],
             description: p.description || matched?.description || '',
             createdAt: p.created_at,
           };
