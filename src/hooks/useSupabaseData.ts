@@ -64,21 +64,24 @@ export function useNotifications(userId: string | undefined) {
     try {
       setLoading(true);
       const data = await sbFetchNotifications(userId);
-      if (data && data.length > 0) {
-        setNotifications(data);
-      } else {
-        const local = getUserNotifications(userId).map((n) => ({
-          id: n.id,
-          user_id: n.userId,
-          title: n.title,
-          message: n.message,
-          type: (n.category || 'account') as any,
-          is_read: n.read,
-          created_at: new Date().toISOString(),
-          related_id: n.actionUrl,
-        }));
-        setNotifications(local);
+      if (Array.isArray(data)) {
+        if (data.length > 0 || (userId !== 'demo-buyer-1' && userId !== 'demo-seller-1')) {
+          setNotifications(data);
+          setError(null);
+          return;
+        }
       }
+      const local = getUserNotifications(userId).map((n) => ({
+        id: n.id,
+        user_id: n.userId,
+        title: n.title,
+        message: n.message,
+        type: (n.category || 'account') as any,
+        is_read: n.read,
+        created_at: new Date().toISOString(),
+        related_id: n.actionUrl,
+      }));
+      setNotifications(local);
       setError(null);
     } catch {
       const local = getUserNotifications(userId).map((n) => ({

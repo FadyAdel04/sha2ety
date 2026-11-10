@@ -38,6 +38,7 @@ export interface AuthContextType {
   resetPassword: (newPassword: string) => Promise<{ error?: string; success?: boolean }>;
   getRoleRedirectUrl: (role?: UserRole | null) => string;
   switchUserRole: (targetRole: UserRole) => Promise<{ error?: string; role: UserRole }>;
+  signInWithGoogle: (role?: UserRole, redirectPath?: string) => Promise<{ error?: string; data?: any }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -236,6 +237,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setSession(currentSession);
           if (currentSession?.user) {
             let profile = mapSupabaseUserToProfile(currentSession.user);
+
+            // Check if there was an intended role during OAuth login/signup
+            const pendingOAuthRole = localStorage.getItem('sha2ety_oauth_role') as UserRole | null;
+            if (pendingOAuthRole && ['buyer', 'seller'].includes(pendingOAuthRole)) {
+              if (profile.role === 'buyer' && pendingOAuthRole === 'seller') {
+                profile.role = 'seller';
+              }
+              localStorage.removeItem('sha2ety_oauth_role');
+            }
+
             setUser(profile);
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(profile));
             // Enrich with profiles table data in background
@@ -538,6 +549,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setSession(null);
     localStorage.removeItem(LOCAL_STORAGE_KEY);
+    // Clean up temporary/guest entries to guarantee clean slate
+    localStorage.removeItem('sha2ety_favorites');
+    localStorage.removeItem('sha2ety_favorites_guest');
+    localStorage.removeItem('sha2ety_fav_ids_guest');
+    localStorage.removeItem('sha2ety_viewed_guest');
+    localStorage.removeItem('sha2ety_buyer_recently_viewed_guest');
+    localStorage.removeItem('sha2ety_buyer_favorites_guest');
     setIsLoading(false);
   };
 
@@ -572,6 +590,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
+  const signInWithGoogle = async (
+    role: UserRole = 'buyer',
+    redirectPath?: string
+  ): Promise<{ error?: string; data?: any }> => {
+    try {
+      setIsLoading(true);
+
+      // Store intended role and redirect destination before OAuth redirect
+      localStorage.setItem('sha2ety_oauth_role', role);
+      if (redirectPath) {
+        localStorage.setItem('sha2ety_oauth_redirect', redirectPath);
+      }
+
+      const redirectTo = `${window.location.origin}/login`;
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'select_account',
+          },
+        },
+      });
+
+      if (error) {
+        console.error('Supabase Google OAuth error:', error);
+        return { error: translateAuthError(error.message) };
+      }
+
+      return { data };
+    } catch (err: any) {
+      console.error('Error during Google sign in:', err);
+      return { error: err.message || 'حدث خطأ أثناء الاتصال بخدمة Google.' };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const getRoleRedirectUrl = (role?: UserRole | null): string => {
     switch (role) {
       case 'seller':
@@ -599,6 +657,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         resetPassword,
         getRoleRedirectUrl,
         switchUserRole,
+        signInWithGoogle,
       }}
     >
       {children}

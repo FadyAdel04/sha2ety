@@ -70,7 +70,7 @@ export const BuyerDashboardPage: React.FC = () => {
       if (sbFavs.favorites.length > 0) {
         setFavorites(sbFavs.favorites);
       } else {
-        setFavorites(getBuyerFavorites());
+        setFavorites(getBuyerFavorites(user?.id));
       }
 
       if (sbApps.appointments.length > 0) {
@@ -99,23 +99,23 @@ export const BuyerDashboardPage: React.FC = () => {
       if (sbStats.stats) {
         setStats(sbStats.stats);
       } else {
-        getBuyerStatistics().then(setStats);
+        getBuyerStatistics(user?.id).then(setStats);
       }
 
       if (sbViewed.properties.length > 0) {
         setRecentlyViewed(sbViewed.properties);
       } else {
-        setRecentlyViewed(getBuyerRecentlyViewed());
+        setRecentlyViewed(getBuyerRecentlyViewed(user?.id));
       }
 
       setLoading(false);
     } else {
       // Fallback timer
       const timer = setTimeout(() => {
-        setFavorites(getBuyerFavorites());
-        setAppointments(getBuyerAppointments());
-        getBuyerStatistics().then(setStats);
-        setRecentlyViewed(getBuyerRecentlyViewed());
+        setFavorites(getBuyerFavorites(user?.id));
+        setAppointments(getBuyerAppointments(user?.id));
+        getBuyerStatistics(user?.id).then(setStats);
+        setRecentlyViewed(getBuyerRecentlyViewed(user?.id));
         setLoading(false);
       }, 1500);
       return () => clearTimeout(timer);
@@ -132,7 +132,7 @@ export const BuyerDashboardPage: React.FC = () => {
     if (user?.id) {
       await sbFavs.remove(propertyId).catch(() => {});
     }
-    const updated = removeBuyerFavorite(propertyId);
+    const updated = removeBuyerFavorite(propertyId, user?.id);
     setFavorites(sbFavs.favorites.length > 0
       ? sbFavs.favorites.filter((f) => f.id !== propertyId)
       : updated);

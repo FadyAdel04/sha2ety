@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Badge } from '@/components/ui/Badge';
+import { GoogleIcon } from '@/components/ui/GoogleIcon';
 import {
   LogIn,
   Eye,
@@ -26,7 +27,8 @@ export type LoginRoleTab = 'buyer' | 'seller' | 'admin';
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { user, isAuthenticated, login, switchUserRole, getRoleRedirectUrl, logout } = useAuth();
+  const { user, isAuthenticated, login, switchUserRole, getRoleRedirectUrl, logout, signInWithGoogle } = useAuth();
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   const redirectPath = searchParams.get('redirect');
 
@@ -113,6 +115,30 @@ export const LoginPage: React.FC = () => {
     setEmail(roleCredentials[initial].email);
     setPassword('Sha2ety@2026');
   }, []);
+
+  // Handle redirect if user is already authenticated (or just returned from Google OAuth)
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      const storedRedirect = localStorage.getItem('sha2ety_oauth_redirect');
+      if (storedRedirect) {
+        localStorage.removeItem('sha2ety_oauth_redirect');
+      }
+      const destination = getSafeRedirectUrl(user.role, storedRedirect || redirectPath);
+      navigate(destination, { replace: true });
+    }
+  }, [isAuthenticated, user, redirectPath, navigate]);
+
+  // Google OAuth Sign-in Handler
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    setIsGoogleLoading(true);
+    const roleForGoogle = selectedRole === 'admin' ? 'buyer' : selectedRole;
+    const result = await signInWithGoogle(roleForGoogle, redirectPath || undefined);
+    if (result.error) {
+      setError(result.error);
+      setIsGoogleLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -454,13 +480,38 @@ export const LoginPage: React.FC = () => {
                     variant="primary"
                     size="lg"
                     className="w-full justify-center shadow-hard text-base"
-                    isLoading={isLoading}
+                    isLoading={isLoading && !isGoogleLoading}
                     rightIcon={<LogIn className="w-5 h-5 stroke-[2.5]" />}
                   >
                     تسجيل الدخول كـ ({roleCredentials[selectedRole].label})
                   </Button>
                 </div>
               </form>
+
+              {/* Divider */}
+              <div className="relative my-4">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t-2 border-[#ece9db]" />
+                </div>
+                <div className="relative flex justify-center text-xs font-black">
+                  <span className="bg-white px-3 text-[#626d84]">أو تسجيل الدخول السحابي الموحد</span>
+                </div>
+              </div>
+
+              {/* Google Sign In Button */}
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={isLoading || isGoogleLoading}
+                className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white border-[2.5px] border-[var(--dp-color-outline)] rounded-xl font-black text-sm text-[var(--dp-color-ink)] hover:bg-slate-50 hover:-translate-y-0.5 active:translate-y-0 transition-all shadow-hard-sm cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <GoogleIcon className="w-5 h-5 shrink-0" />
+                <span>
+                  {isGoogleLoading
+                    ? 'جاري الاتصال بحساب Google...'
+                    : `المتابعة بحساب Google كـ (${roleCredentials[selectedRole].label})`}
+                </span>
+              </button>
 
               {/* ----------------------------------------------------
                   2. One-Click Instant Login Swapping Bar

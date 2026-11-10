@@ -44,17 +44,17 @@ export const BuyerFavoritesPage: React.FC = () => {
       if (sbFavorites.length > 0) {
         setFavorites(sbFavorites);
       } else {
-        setFavorites(getBuyerFavorites());
+        setFavorites(getBuyerFavorites(user?.id));
       }
       setLoading(false);
     }
-  }, [sbLoading, sbFavorites]);
+  }, [sbLoading, sbFavorites, user?.id]);
 
   const handleRemove = async (id: string) => {
     if (user?.id) {
       await removeSb(id).catch(() => {});
     }
-    const updated = removeBuyerFavorite(id);
+    const updated = removeBuyerFavorite(id, user?.id);
     setFavorites(sbFavorites.length > 0 ? sbFavorites.filter((f) => f.id !== id) : updated);
     setConfirmDeleteId(null);
     setToastMessage('تمت إزالة العقار من المفضلة بنجاح.');

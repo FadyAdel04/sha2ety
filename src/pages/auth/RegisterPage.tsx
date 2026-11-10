@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
+import { GoogleIcon } from '@/components/ui/GoogleIcon';
 import {
   UserPlus,
   Home,
@@ -19,7 +20,8 @@ import {
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
-  const { register, getRoleRedirectUrl } = useAuth();
+  const { register, getRoleRedirectUrl, signInWithGoogle } = useAuth();
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   // Role selection: buyer or seller ONLY (Admin can never be self-assigned)
   const [accountType, setAccountType] = useState<'buyer' | 'seller'>('buyer');
@@ -47,6 +49,16 @@ export const RegisterPage: React.FC = () => {
   const isPasswordLongEnough = password.length >= 8;
   const doesPasswordHaveNumber = /\d/.test(password);
   const doPasswordsMatch = password && confirmPassword && password === confirmPassword;
+
+  const handleGoogleSignUp = async () => {
+    setError(null);
+    setIsGoogleLoading(true);
+    const result = await signInWithGoogle(accountType);
+    if (result.error) {
+      setError(result.error);
+      setIsGoogleLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -338,13 +350,38 @@ export const RegisterPage: React.FC = () => {
                   variant="primary"
                   size="lg"
                   className="w-full justify-center shadow-hard text-base"
-                  isLoading={isLoading}
+                  isLoading={isLoading && !isGoogleLoading}
                   rightIcon={<UserPlus className="w-5 h-5 stroke-[2.5]" />}
                 >
                   إنشاء الحساب والمتابعة
                 </Button>
               </div>
             </form>
+
+            {/* Divider */}
+            <div className="relative my-5">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t-2 border-[#ece9db]" />
+              </div>
+              <div className="relative flex justify-center text-xs font-black">
+                <span className="bg-white px-3 text-[#626d84]">أو التسجيل السريع بضغطة واحدة</span>
+              </div>
+            </div>
+
+            {/* Google Quick Sign-up Button */}
+            <button
+              type="button"
+              onClick={handleGoogleSignUp}
+              disabled={isLoading || isGoogleLoading}
+              className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white border-[2.5px] border-[var(--dp-color-outline)] rounded-xl font-black text-sm text-[var(--dp-color-ink)] hover:bg-slate-50 hover:-translate-y-0.5 active:translate-y-0 transition-all shadow-hard-sm cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <GoogleIcon className="w-5 h-5 shrink-0" />
+              <span>
+                {isGoogleLoading
+                  ? 'جاري الاتصال بحساب Google...'
+                  : `التسجيل الفوري كـ (${accountType === 'seller' ? 'بائع معتمد' : 'مشتري'}) عبر Google`}
+              </span>
+            </button>
 
             {/* Bottom link to login */}
             <div className="mt-8 pt-6 border-t-2 border-[#ece9db] text-center text-xs sm:text-sm font-bold text-[#626d84]">

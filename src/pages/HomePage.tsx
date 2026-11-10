@@ -10,6 +10,8 @@ import { HomeSearchPanel } from '@/components/home/HomeSearchPanel';
 import { CategoryGrid } from '@/components/home/CategoryGrid';
 import { ComparisonFloatingDock } from '@/components/marketplace/ComparisonFloatingDock';
 import { fetchPublishedProperties } from '@/services/propertyService';
+import { useAuth } from '@/context/AuthContext';
+import { getBuyerFavorites, toggleBuyerFavorite } from '@/services/buyerService';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -24,17 +26,15 @@ import {
 } from 'lucide-react';
 
 export const HomePage: React.FC = () => {
-  const [favoriteIds, setFavoriteIds] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem('sha2ety_favorites');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
-
+  const { user } = useAuth();
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [featuredProperties, setFeaturedProperties] = useState<PropertyItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const favs = getBuyerFavorites(user?.id);
+    setFavoriteIds(favs.map((f) => f.id));
+  }, [user?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -62,13 +62,12 @@ export const HomePage: React.FC = () => {
   const handleFavoriteToggle = (id: string, isFav: boolean) => {
     setFavoriteIds((prev) => {
       const updated = isFav ? [...prev, id] : prev.filter((item) => item !== id);
-      try {
-        localStorage.setItem('sha2ety_favorites', JSON.stringify(updated));
-      } catch {
-        // Ignore
-      }
       return updated;
     });
+    const prop = featuredProperties.find((p) => p.id === id);
+    if (prop) {
+      toggleBuyerFavorite(prop, user?.id);
+    }
   };
 
   return (

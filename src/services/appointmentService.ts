@@ -209,9 +209,13 @@ export function getSellerAppointmentsList(sellerId?: string): AppointmentItem[] 
   if (!sellerId) return all;
   const filtered = all.filter((a) => a.sellerId === sellerId);
   if (filtered.length > 0) return filtered;
-  const demoFallback = all.filter((a) => a.sellerId === 'demo-seller-1');
-  if (demoFallback.length > 0) return demoFallback;
-  return INITIAL_APPOINTMENTS;
+  // ONLY provide demo appointments if explicitly logged in as demo-seller-1
+  if (sellerId === 'demo-seller-1') {
+    const demoFallback = all.filter((a) => a.sellerId === 'demo-seller-1');
+    if (demoFallback.length > 0) return demoFallback;
+    return INITIAL_APPOINTMENTS;
+  }
+  return [];
 }
 
 // Helper to get stored appointments specifically filtered for buyer
@@ -220,9 +224,13 @@ export function getBuyerAppointmentsList(buyerId?: string): AppointmentItem[] {
   if (!buyerId) return all;
   const filtered = all.filter((a) => a.buyerId === buyerId);
   if (filtered.length > 0) return filtered;
-  const demoFallback = all.filter((a) => a.buyerId === 'demo-buyer-1');
-  if (demoFallback.length > 0) return demoFallback;
-  return INITIAL_APPOINTMENTS;
+  // ONLY provide demo appointments if explicitly logged in as demo-buyer-1
+  if (buyerId === 'demo-buyer-1') {
+    const demoFallback = all.filter((a) => a.buyerId === 'demo-buyer-1');
+    if (demoFallback.length > 0) return demoFallback;
+    return INITIAL_APPOINTMENTS;
+  }
+  return [];
 }
 
 // Helper to save appointments
@@ -406,8 +414,10 @@ function pushNotification(
       }).catch(() => {});
     }
 
-    // 4. Fallback to role-based local storage
-    const key = target === 'buyer' ? 'sha2ety_buyer_notifications' : 'sha2ety_seller_notifications';
+    // 4. Fallback to user-scoped local storage
+    const key = target === 'buyer'
+      ? (targetUserId ? `sha2ety_buyer_notifications_${targetUserId}` : 'sha2ety_buyer_notifications')
+      : (targetUserId ? `sha2ety_seller_notifications_${targetUserId}` : 'sha2ety_seller_notifications');
     const existing = JSON.parse(localStorage.getItem(key) || '[]');
     existing.unshift({
       id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,

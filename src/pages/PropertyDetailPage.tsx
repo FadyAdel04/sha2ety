@@ -16,7 +16,11 @@ import { PropertyLocationMap } from '@/components/property/PropertyLocationMap';
 import { BookingModal } from '@/components/appointments/BookingModal';
 import { PropertyInquiryModal } from '@/components/inquiries/PropertyInquiryModal';
 import { getPropertyById, fetchPublishedProperties } from '@/services/propertyService';
-import { recordRecentlyViewedProperty } from '@/services/buyerService';
+import {
+  recordRecentlyViewedProperty,
+  isBuyerFavorite,
+  toggleBuyerFavorite,
+} from '@/services/buyerService';
 import {
   isInComparison,
   addToComparison,
@@ -76,8 +80,8 @@ export const PropertyDetailPage: React.FC = () => {
         setLoading(false);
 
         if (prop) {
-          // Record view in recently viewed
-          recordRecentlyViewedProperty(prop);
+          // Record view in recently viewed (user-scoped)
+          recordRecentlyViewedProperty(prop, user?.id);
 
           // Record view in backend analytics
           try {
@@ -130,16 +134,8 @@ export const PropertyDetailPage: React.FC = () => {
 
   useEffect(() => {
     if (!property?.id) return;
-    try {
-      const stored = localStorage.getItem('sha2ety_favorites');
-      if (stored) {
-        const list = JSON.parse(stored);
-        setIsFavorite(list.includes(property.id));
-      }
-    } catch {
-      // Ignore
-    }
-  }, [property?.id]);
+    setIsFavorite(isBuyerFavorite(property.id, user?.id));
+  }, [property?.id, user?.id]);
 
   const [copiedShare, setCopiedShare] = useState(false);
   const [isBookModalOpen, setIsBookModalOpen] = useState(false);
@@ -165,23 +161,11 @@ export const PropertyDetailPage: React.FC = () => {
     }
   };
 
-  // Toggle Favorite
+  // Toggle Favorite (User-scoped and synced)
   const handleToggleFavorite = () => {
     if (!property) return;
-    const next = !isFavorite;
+    const next = toggleBuyerFavorite(property, user?.id);
     setIsFavorite(next);
-    try {
-      const stored = localStorage.getItem('sha2ety_favorites');
-      let list: string[] = stored ? JSON.parse(stored) : [];
-      if (next) {
-        if (!list.includes(property.id)) list.push(property.id);
-      } else {
-        list = list.filter((item) => item !== property.id);
-      }
-      localStorage.setItem('sha2ety_favorites', JSON.stringify(list));
-    } catch {
-      // Ignore
-    }
   };
 
   // Share URL with Clipboard

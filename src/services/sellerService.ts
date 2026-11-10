@@ -228,15 +228,32 @@ export async function getSellerProperties(sellerId?: string): Promise<SellerProp
   
   // First add all master properties relevant to seller
   masterProps.forEach((p) => {
-    if (!sellerId || !p.sellerId || p.sellerId === sellerId || p.sellerId === 'demo-seller-1') {
+    if (!sellerId) {
       map.set(p.id, mapMasterToSellerProperty(p, sellerId));
+    } else if (sellerId === 'demo-seller-1') {
+      if (p.sellerId === 'demo-seller-1' || !p.sellerId) {
+        map.set(p.id, mapMasterToSellerProperty(p, sellerId));
+      }
+    } else {
+      // Real seller: strictly their own properties
+      if (p.sellerId === sellerId) {
+        map.set(p.id, mapMasterToSellerProperty(p, sellerId));
+      }
     }
   });
 
   // Then add/overwrite with explicit seller properties
   storedSellerProps.forEach((p) => {
-    if (!sellerId || !p.sellerId || p.sellerId === sellerId) {
+    if (!sellerId) {
       map.set(p.id, p);
+    } else if (sellerId === 'demo-seller-1') {
+      if (p.sellerId === 'demo-seller-1' || !p.sellerId) {
+        map.set(p.id, p);
+      }
+    } else {
+      if (p.sellerId === sellerId) {
+        map.set(p.id, p);
+      }
     }
   });
 
@@ -258,9 +275,11 @@ export async function getSellerStatistics(sellerId?: string): Promise<SellerStat
   
   // Real count of seller appointments
   const allAppointments = getStoredAppointments();
-  const appointmentsCount = allAppointments.filter(
-    (a) => !sellerId || a.sellerId === sellerId || a.sellerId === 'demo-seller-1'
-  ).length;
+  const appointmentsCount = allAppointments.filter((a) => {
+    if (!sellerId) return true;
+    if (sellerId === 'demo-seller-1') return a.sellerId === 'demo-seller-1';
+    return a.sellerId === sellerId;
+  }).length;
 
   // Real count of favorites for seller's properties
   let favoritesCount = 0;
@@ -280,9 +299,11 @@ export async function getSellerStatistics(sellerId?: string): Promise<SellerStat
     const rawConvs = localStorage.getItem('sha2ety_conversations_v2');
     if (rawConvs) {
       const convs = JSON.parse(rawConvs);
-      inquiriesCount = convs.filter(
-        (c: any) => !sellerId || c.sellerId === sellerId || c.sellerId === 'demo-seller-1'
-      ).length;
+      inquiriesCount = convs.filter((c: any) => {
+        if (!sellerId) return true;
+        if (sellerId === 'demo-seller-1') return c.sellerId === 'demo-seller-1';
+        return c.sellerId === sellerId;
+      }).length;
     }
   } catch {
     // Ignore

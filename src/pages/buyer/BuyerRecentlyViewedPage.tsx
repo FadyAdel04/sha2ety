@@ -33,12 +33,12 @@ export const BuyerRecentlyViewedPage: React.FC = () => {
     if (!sbLoading && sbViewed.length > 0) {
       setProperties(sbViewed);
     } else {
-      setProperties(getBuyerRecentlyViewed());
+      setProperties(getBuyerRecentlyViewed(user?.id));
     }
-  }, [sbLoading, sbViewed]);
+  }, [sbLoading, sbViewed, user?.id]);
 
   const handleClearHistory = () => {
-    clearBuyerRecentlyViewed();
+    clearBuyerRecentlyViewed(user?.id);
     setProperties([]);
     setConfirmClearOpen(false);
     setToastMessage('تم مسح سجل العقارات التي شاهدتها بنجاح.');
@@ -47,7 +47,7 @@ export const BuyerRecentlyViewedPage: React.FC = () => {
   const handleFavoriteToggle = (propId: string) => {
     const target = properties.find((p) => p.id === propId);
     if (target) {
-      toggleBuyerFavorite(target);
+      toggleBuyerFavorite(target, user?.id);
     }
   };
 
@@ -114,7 +114,7 @@ export const BuyerRecentlyViewedPage: React.FC = () => {
               <PropertyCard
                 key={prop.id}
                 property={prop}
-                isFavoriteInitial={isBuyerFavorite(prop.id)}
+                isFavoriteInitial={isBuyerFavorite(prop.id, user?.id)}
                 onFavoriteToggle={() => handleFavoriteToggle(prop.id)}
               />
             ))}

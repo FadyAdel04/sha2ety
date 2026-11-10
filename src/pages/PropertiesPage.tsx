@@ -14,6 +14,8 @@ import { MarketplaceFilterDrawer } from '@/components/marketplace/MarketplaceFil
 import { MarketInsightsCard } from '@/components/marketplace/MarketInsightsCard';
 import { ComparisonFloatingDock } from '@/components/marketplace/ComparisonFloatingDock';
 import { fetchPublishedProperties } from '@/services/propertyService';
+import { useAuth } from '@/context/AuthContext';
+import { getBuyerFavorites, toggleBuyerFavorite } from '@/services/buyerService';
 import {
   SlidersHorizontal,
   ArrowUpDown,
@@ -56,25 +58,23 @@ export const PropertiesPage: React.FC = () => {
   const [properties, setProperties] = useState<PropertyItem[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
-  const [favoriteIds, setFavoriteIds] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem('sha2ety_favorites');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  const { user } = useAuth();
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    const favs = getBuyerFavorites(user?.id);
+    setFavoriteIds(favs.map((f) => f.id));
+  }, [user?.id]);
 
   const handleFavoriteToggle = (id: string, isFav: boolean) => {
     setFavoriteIds((prev) => {
       const updated = isFav ? [...prev, id] : prev.filter((item) => item !== id);
-      try {
-        localStorage.setItem('sha2ety_favorites', JSON.stringify(updated));
-      } catch {
-        // Ignore
-      }
       return updated;
     });
+    const prop = properties.find((p) => p.id === id);
+    if (prop) {
+      toggleBuyerFavorite(prop, user?.id);
+    }
   };
 
   // Fetch properties whenever query parameters change

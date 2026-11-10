@@ -349,21 +349,45 @@ export function getUserNotifications(
 ): NotificationItem[] {
   const all = getStoredNotifications();
   return all.filter((item) => {
-    // Match seller vs buyer vs admin or specific user ID
-    const isTargetUser =
-      item.userId === userRoleOrId ||
-      item.userId === 'all' ||
-      userRoleOrId === 'admin' ||
-      userRole === 'admin' ||
-      (userRole === 'seller' && (item.userId === 'seller' || item.userId === 'demo-seller-1')) ||
-      (userRole === 'buyer' && (item.userId === 'buyer' || item.userId === 'demo-buyer-1')) ||
-      (userRoleOrId === 'seller' && (item.userId === 'seller' || item.userId === 'demo-seller-1')) ||
-      (userRoleOrId === 'buyer' && (item.userId === 'buyer' || item.userId === 'demo-buyer-1')) ||
-      (userRoleOrId && userRoleOrId.length > 20 && (item.userId === 'seller' || item.userId === 'buyer'));
+    // 1. Admin gets all
+    if (userRoleOrId === 'admin' || userRole === 'admin') {
+      if (category && category !== 'all' && item.category !== category) return false;
+      return true;
+    }
 
-    if (!isTargetUser) return false;
-    if (category && category !== 'all' && item.category !== category) return false;
-    return true;
+    // 2. Broadcast to all users
+    if (item.userId === 'all') {
+      if (category && category !== 'all' && item.category !== category) return false;
+      return true;
+    }
+
+    // 3. Exact user ID match
+    if (item.userId === userRoleOrId) {
+      if (category && category !== 'all' && item.category !== category) return false;
+      return true;
+    }
+
+    // 4. Demo users explicitly
+    if (userRoleOrId === 'demo-seller-1' && (item.userId === 'seller' || item.userId === 'demo-seller-1')) {
+      if (category && category !== 'all' && item.category !== category) return false;
+      return true;
+    }
+    if (userRoleOrId === 'demo-buyer-1' && (item.userId === 'buyer' || item.userId === 'demo-buyer-1')) {
+      if (category && category !== 'all' && item.category !== category) return false;
+      return true;
+    }
+
+    // 5. Generic role lookup without user ID
+    if (userRoleOrId === 'seller' && !userRole) {
+      if (category && category !== 'all' && item.category !== category) return false;
+      return item.userId === 'seller' || item.userId === 'demo-seller-1';
+    }
+    if (userRoleOrId === 'buyer' && !userRole) {
+      if (category && category !== 'all' && item.category !== category) return false;
+      return item.userId === 'buyer' || item.userId === 'demo-buyer-1';
+    }
+
+    return false;
   });
 }
 
@@ -465,20 +489,20 @@ export function getUserConversations(
 
   if (userRole === 'seller') {
     // Return conversations for specific seller
-    if (!userId) return all;
+    if (!userId) return [];
     const filtered = all.filter((c) => c.sellerId === userId);
     if (filtered.length > 0) return filtered;
-    if (userId === 'demo-seller-1' || all.length === 0) {
+    if (userId === 'demo-seller-1') {
       return INITIAL_CONVERSATIONS;
     }
     return [];
   }
 
   // Buyer
-  if (!userId) return all;
+  if (!userId) return [];
   const buyerFiltered = all.filter((c) => c.buyerId === userId);
   if (buyerFiltered.length > 0) return buyerFiltered;
-  if (userId === 'demo-buyer-1' || all.length === 0) {
+  if (userId === 'demo-buyer-1') {
     return INITIAL_CONVERSATIONS;
   }
   return [];
